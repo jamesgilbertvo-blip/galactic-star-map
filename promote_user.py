@@ -1,28 +1,34 @@
 import sqlite3
+import psycopg2
 import sys
+import os
+from urllib.parse import urlparse
 
 # --- CONFIGURATION ---
-DATABASE_FILE = 'starmap.db'
+DATABASE_URL = os.environ.get('DATABASE_URL')
+
+def get_db_connection():
+    if DATABASE_URL:
+        conn = psycopg2.connect(DATABASE_URL)
+    else:
+        conn = sqlite3.connect('starmap.db')
+    return conn
 
 def promote_user(username):
-    """
-    A command-line utility to grant admin privileges to a user.
-    """
+    """Grants admin privileges to a user."""
     print(f"Attempting to promote user '{username}' to admin...")
     try:
-        conn = sqlite3.connect(DATABASE_FILE)
+        conn = get_db_connection()
         cursor = conn.cursor()
+        
+        param_style = '%s' if bool(DATABASE_URL) else '?'
 
-        # Check if the user exists
-        cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
-        user = cursor.fetchone()
-
-        if not user:
-            print(f"\n❌ Error: User '{username}' not found in the database.")
+        cursor.execute(f"SELECT id FROM users WHERE username = {param_style}", (username,))
+        if not cursor.fetchone():
+            print(f"\n❌ Error: User '{username}' not found.")
             return
 
-        # Update the user's is_admin flag
-        cursor.execute("UPDATE users SET is_admin = 1 WHERE username = ?", (username,))
+        cursor.execute(f"UPDATE users SET is_admin = TRUE WHERE username = {param_style}", (username,))
         
         conn.commit()
         conn.close()
@@ -37,3 +43,4 @@ if __name__ == "__main__":
         print("Usage: python promote_user.py <username>")
     else:
         promote_user(sys.argv[1])
+
