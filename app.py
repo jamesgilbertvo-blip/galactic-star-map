@@ -25,22 +25,17 @@ STRUCTURES_API_URL = "https://play.textspaced.com/api/system/structures/"
 CURRENT_SYSTEM_API_URL = "https://play.textspaced.com/api/system/"
 FACTION_API_URL = "https://play.textspaced.com/api/faction/info/"
 
-# --- CORRECTED: DATABASE CONNECTION ---
+# --- DATABASE CONNECTION & SETUP ---
 def get_db_connection():
-    """Connects to PostgreSQL if DATABASE_URL is set, otherwise SQLite."""
     if DATABASE_URL:
-        # Production connection to PostgreSQL
         conn = psycopg2.connect(DATABASE_URL)
-        # Use a dictionary cursor for PostgreSQL to make it behave like sqlite3.Row
         return conn, conn.cursor(cursor_factory=RealDictCursor)
     else:
-        # Local development connection to SQLite
         conn = sqlite3.connect('starmap.db')
         conn.row_factory = sqlite3.Row
         return conn, conn.cursor()
 
 def setup_database_if_needed():
-    """Creates the database schema if tables don't exist."""
     conn, cursor = get_db_connection()
     pg_compat = bool(DATABASE_URL)
     try:
@@ -140,6 +135,7 @@ def sync_faction_database(current_system_data, systems_data, wormholes_data, str
         else: cursor.executemany('INSERT OR IGNORE INTO wormholes (system_a_id, system_b_id) VALUES (?, ?)', wormholes_to_insert)
     conn.commit(); conn.close()
 
+# --- ROUTES ---
 @app.route('/api/sync', methods=['POST'])
 def sync_data():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
@@ -316,10 +312,12 @@ def calculate_path():
         if step_method != current_method:
             simple_path.append({'from_id': current_leg_start_id, 'to_id': full_path_ids[i-1], 'method': current_method})
             current_leg_start_id = full_path_ids[i-1]; current_method = step_method
-    simple_path.append({'from_id': current_leg_start_id, 'to_id': full_path_ids[-1], 'method': current_method})
+    simple_path.append({'from_id': current_leg_start_id, 'to_id': full_path_ids[-end], 'method': current_method})
     return jsonify({'path': full_path_ids, 'simple_path': simple_path, 'distance': total_distance})
 
+# CORRECTED: The setup function is called at the top level
+setup_database_if_needed()
+
 if __name__ == '__main__':
-    setup_database_if_needed()
     app.run(debug=True, port=5000)
 
