@@ -1,34 +1,39 @@
 import sqlite3
 import psycopg2
+from psycopg2.extras import RealDictCursor
 import sys
 import os
-from urllib.parse import urlparse
 
 # --- CONFIGURATION ---
 DATABASE_URL = os.environ.get('DATABASE_URL')
 
 def get_db_connection():
+    """Connects to the appropriate database."""
     if DATABASE_URL:
         conn = psycopg2.connect(DATABASE_URL)
+        return conn, conn.cursor(cursor_factory=RealDictCursor)
     else:
         conn = sqlite3.connect('starmap.db')
-    return conn
+        conn.row_factory = sqlite3.Row
+        return conn, conn.cursor()
 
 def promote_user(username):
     """Grants admin privileges to a user."""
     print(f"Attempting to promote user '{username}' to admin...")
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        param_style = '%s' if bool(DATABASE_URL) else '?'
+        conn, cursor = get_db_connection()
+        pg_compat = bool(DATABASE_URL)
+        param = '%s' if pg_compat else '?'
 
-        cursor.execute(f"SELECT id FROM users WHERE username = {param_style}", (username,))
-        if not cursor.fetchone():
-            print(f"\n❌ Error: User '{username}' not found.")
+        cursor.execute(f"SELECT id FROM users WHERE username = {param}", (username,))
+        user = cursor.fetchone()
+
+        if not user:
+            print(f"\n❌ Error: User '{username}' not found in the database.")
+            conn.close()
             return
 
-        cursor.execute(f"UPDATE users SET is_admin = TRUE WHERE username = {param_style}", (username,))
+        cursor.execute(f"UPDATE users SET is_admin = TRUE WHERE username = {param}", (username,))
         
         conn.commit()
         conn.close()

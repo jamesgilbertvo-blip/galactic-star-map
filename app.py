@@ -25,13 +25,16 @@ STRUCTURES_API_URL = "https://play.textspaced.com/api/system/structures/"
 CURRENT_SYSTEM_API_URL = "https://play.textspaced.com/api/system/"
 FACTION_API_URL = "https://play.textspaced.com/api/faction/info/"
 
-# --- DATABASE CONNECTION & SETUP ---
+# --- CORRECTED: DATABASE CONNECTION ---
 def get_db_connection():
     """Connects to PostgreSQL if DATABASE_URL is set, otherwise SQLite."""
     if DATABASE_URL:
+        # Production connection to PostgreSQL
         conn = psycopg2.connect(DATABASE_URL)
+        # Use a dictionary cursor for PostgreSQL to make it behave like sqlite3.Row
         return conn, conn.cursor(cursor_factory=RealDictCursor)
     else:
+        # Local development connection to SQLite
         conn = sqlite3.connect('starmap.db')
         conn.row_factory = sqlite3.Row
         return conn, conn.cursor()
@@ -136,9 +139,7 @@ def sync_faction_database(current_system_data, systems_data, wormholes_data, str
         if pg_compat: cursor.executemany(f'INSERT INTO wormholes (system_a_id, system_b_id) VALUES ({param}, {param}) ON CONFLICT DO NOTHING', wormholes_to_insert)
         else: cursor.executemany('INSERT OR IGNORE INTO wormholes (system_a_id, system_b_id) VALUES (?, ?)', wormholes_to_insert)
     conn.commit(); conn.close()
-    print(f"Database updated for faction ID {faction_id}.")
 
-# --- ROUTES ---
 @app.route('/api/sync', methods=['POST'])
 def sync_data():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
@@ -171,7 +172,8 @@ def register():
         cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (faction_name,)); faction = cursor.fetchone()
         if faction: faction_id = faction['id']
         else:
-            cursor.execute(f"INSERT INTO factions (name) VALUES ({param}) {'RETURNING id' if pg_compat else ''}", (faction_name,)); faction_id = cursor.fetchone()['id'] if pg_compat else cursor.lastrowid
+            if pg_compat: cursor.execute(f"INSERT INTO factions (name) VALUES ({param}) RETURNING id", (faction_name,)); faction_id = cursor.fetchone()['id']
+            else: cursor.execute("INSERT INTO factions (name) VALUES (?)", (faction_name,)); faction_id = cursor.lastrowid
         if pg_compat: cursor.execute(f"INSERT INTO users (username, password, api_key, faction_id) VALUES ({param}, {param}, {param}, {param}) RETURNING id", (username, password, api_key, faction_id)); user_id = cursor.fetchone()['id']
         else: cursor.execute("INSERT INTO users (username, password, api_key, faction_id) VALUES (?, ?, ?, ?)", (username, password, api_key, faction_id)); user_id = cursor.lastrowid
         conn.commit(); session['user_id'], session['username'], session['faction_id'], session['is_admin'] = user_id, username, faction_id, False
