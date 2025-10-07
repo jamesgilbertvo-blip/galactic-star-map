@@ -77,6 +77,10 @@
                         <input id="toggle-all-catapults" type="checkbox" checked class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
                         <label for="toggle-all-catapults" class="ml-2 block text-sm text-gray-300">Show All Catapult Ranges</label>
                     </div>
+                    <div class="flex items-center">
+                        <input id="toggle-unclaimed-names" type="checkbox" class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
+                        <label for="toggle-unclaimed-names" class="ml-2 block text-sm text-gray-300">Show Unclaimed Names</label>
+                    </div>
                     <p class="text-xs text-gray-500">Shift+Click a system to toggle its range.</p>
                     <button id="reset-view-button" class="mt-2 w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-md text-sm">Reset View</button>
                 </div>
@@ -92,9 +96,10 @@
         const SPIRAL_TIGHTNESS = 0.1; const SPIRAL_SCALE = 50;
         let showAllCatapults = true; let toggledCatapultIds = new Set();
         let activeRouteInput = null;
-        let hoveredSystem = null; // NEW: For hover labels
+        let hoveredSystem = null;
+        let showUnclaimedNames = false; // Default to hidden
 
-        const dom = { loginView: document.getElementById('login-view'), mapView: document.getElementById('map-view'), registerView: document.getElementById('register-view'), loginForm: document.getElementById('login-form'), registerForm: document.getElementById('register-form'), profileView: document.getElementById('profile-view'), canvas: document.getElementById('map-canvas'), ctx: document.getElementById('map-canvas').getContext('2d'), loginError: document.getElementById('login-error'), logoutButton: document.getElementById('logout-button'), welcomeMessage: document.getElementById('welcome-message'), syncButton: document.getElementById('sync-button'), syncStatus: document.getElementById('sync-status'), routeForm: document.getElementById('route-form'), startSystemInput: document.getElementById('start-system-input'), endSystemInput: document.getElementById('end-system-input'), systemDataList: document.getElementById('system-list'), routeDetailsContainer: document.getElementById('route-details'), profileButton: document.getElementById('profile-button'), closeProfileButton: document.getElementById('close-profile-button'), profileForm: document.getElementById('profile-form'), apiKeyInput: document.getElementById('api-key-input'), newPasswordInput: document.getElementById('new-password-input'), profileStatus: document.getElementById('profile-status'), registerError: document.getElementById('register-error'), showRegisterViewButton: document.getElementById('show-register-view-button'), showLoginViewButton: document.getElementById('show-login-view-button'), toggleAllCatapults: document.getElementById('toggle-all-catapults'), userControls: document.getElementById('user-controls'), resetViewButton: document.getElementById('reset-view-button') };
+        const dom = { loginView: document.getElementById('login-view'), mapView: document.getElementById('map-view'), registerView: document.getElementById('register-view'), loginForm: document.getElementById('login-form'), registerForm: document.getElementById('register-form'), profileView: document.getElementById('profile-view'), canvas: document.getElementById('map-canvas'), ctx: document.getElementById('map-canvas').getContext('2d'), loginError: document.getElementById('login-error'), logoutButton: document.getElementById('logout-button'), welcomeMessage: document.getElementById('welcome-message'), syncButton: document.getElementById('sync-button'), syncStatus: document.getElementById('sync-status'), routeForm: document.getElementById('route-form'), startSystemInput: document.getElementById('start-system-input'), endSystemInput: document.getElementById('end-system-input'), systemDataList: document.getElementById('system-list'), routeDetailsContainer: document.getElementById('route-details'), profileButton: document.getElementById('profile-button'), closeProfileButton: document.getElementById('close-profile-button'), profileForm: document.getElementById('profile-form'), apiKeyInput: document.getElementById('api-key-input'), newPasswordInput: document.getElementById('new-password-input'), profileStatus: document.getElementById('profile-status'), registerError: document.getElementById('register-error'), showRegisterViewButton: document.getElementById('show-register-view-button'), showLoginViewButton: document.getElementById('show-login-view-button'), toggleAllCatapults: document.getElementById('toggle-all-catapults'), userControls: document.getElementById('user-controls'), resetViewButton: document.getElementById('reset-view-button'), toggleUnclaimedNames: document.getElementById('toggle-unclaimed-names') };
 
         const apiFetch = (url, options = {}) => { options.credentials = 'include'; return fetch(url, options); };
         const handleLogin = async (e) => { e.preventDefault(); const r=await apiFetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:dom.loginForm.username.value,password:dom.loginForm.password.value})}); const d=await r.json(); if(r.ok)showMapView(d.username, d.is_admin); else dom.loginError.textContent=d.message||'Login failed.'; };
@@ -160,9 +165,13 @@
                 ctx.beginPath();
                 ctx.arc(sys.x, sys.y, (isOnPath || isHovered ? 6 : 4) / viewTransform.scale, 0, Math.PI * 2);
                 ctx.fill();
-
-                // UPDATED: Label drawing logic
-                const shouldShowLabel = isOnPath || isHovered || viewTransform.scale > 0.8;
+                
+                const isDefaultName = sys.name.startsWith("System ");
+                let shouldShowLabel = (isOnPath || isHovered || viewTransform.scale > 0.8);
+                if (isDefaultName && !showUnclaimedNames) {
+                    shouldShowLabel = false;
+                }
+                
                 if (shouldShowLabel) {
                     ctx.fillStyle = (isOnPath || isHovered) ? '#ffffff' : '#e5e7eb';
                     ctx.font = `${(isOnPath || isHovered ? 12 : 10) / viewTransform.scale}px Inter`;
@@ -174,6 +183,7 @@
         }
         
         function handleToggleAllCatapults(e) { showAllCatapults = e.target.checked; toggledCatapultIds.clear(); drawMap(); }
+        function handleToggleUnclaimedNames(e) { showUnclaimedNames = e.target.checked; drawMap(); }
         function handleResetView() { fitMapToView(); drawMap(); }
         function onMouseDown(e) { isMouseDown = true; isDragging = false; dragStartPos = { x: e.clientX, y: e.clientY }; lastDragPosition = { x: e.clientX, y: e.clientY }; }
         
@@ -240,6 +250,7 @@
             window.addEventListener('resize', resizeCanvas);
             dom.loginForm.addEventListener('submit', handleLogin); dom.registerForm.addEventListener('submit', handleRegister); dom.logoutButton.addEventListener('click', handleLogout); dom.syncButton.addEventListener('click', handleSync); dom.profileButton.addEventListener('click', openProfile); dom.closeProfileButton.addEventListener('click', closeProfile); dom.profileForm.addEventListener('submit', handleProfileUpdate); dom.showRegisterViewButton.addEventListener('click', showRegisterView); dom.showLoginViewButton.addEventListener('click', showLoginView);
             dom.toggleAllCatapults.addEventListener('change', handleToggleAllCatapults);
+            dom.toggleUnclaimedNames.addEventListener('change', handleToggleUnclaimedNames);
             dom.resetViewButton.addEventListener('click', handleResetView);
             dom.routeForm.addEventListener('submit', (e) => { e.preventDefault(); const s=Object.values(systems).find(s=>s.name===dom.startSystemInput.value), eSys=Object.values(systems).find(s=>s.name===dom.endSystemInput.value); if(s&&eSys) findPath(String(s.id),String(eSys.id)); });
             dom.startSystemInput.addEventListener('focus', () => { activeRouteInput = dom.startSystemInput; });
