@@ -39,22 +39,14 @@ def setup_database_if_needed():
     conn, cursor = get_db_connection()
     pg_compat = bool(DATABASE_URL)
     try:
-        if pg_compat:
-            cursor.execute("SELECT to_regclass('public.users')")
-            table_exists = cursor.fetchone()['to_regclass']
-        else:
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
-            table_exists = cursor.fetchone()
-        
-        if table_exists:
-            print("Database tables already exist.")
-            conn.close()
-            return
-    except (sqlite3.OperationalError, psycopg2.Error) as e:
-        print(f"Error checking for tables, assuming they need creation: {e}")
-        conn.rollback() 
-    
-    print("Database tables not found. Creating schema...")
+        # A more robust check: try to query a table and catch the specific error if it fails.
+        cursor.execute("SELECT id FROM users LIMIT 1")
+        print("Database tables already exist.")
+        conn.close()
+        return
+    except (sqlite3.OperationalError, psycopg2.errors.UndefinedTable):
+        print("Database tables not found. Creating schema...")
+        conn.rollback() # Rollback the failed transaction before creating tables
     
     user_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
     faction_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
@@ -100,8 +92,7 @@ def sync_faction_database(current_system_data, systems_data, wormholes_data, str
     conn, cursor = get_db_connection(); pg_compat = bool(DATABASE_URL); param = '%s' if pg_compat else '?'
     all_systems = {}
     if current_system_data and 'system' in current_system_data:
-        for sys_id, sys_info in current_system_data['system'].items():
-            all_systems[int(sys_id)] = {'system_id': int(sys_id), 'system_name': sys_info['system_name'], 'system_position': sys_info['system_position']}
+        for sys_id, sys_info in current_system_data['system'].items(): all_systems[int(sys_id)] = {'system_id': int(sys_id), 'system_name': sys_info['system_name'], 'system_position': sys_info['system_position']}
     if systems_data:
         for s in systems_data: all_systems[s['system_id']] = s
     if wormholes_data and 'stable' in wormholes_data:
@@ -312,10 +303,10 @@ def calculate_path():
         if step_method != current_method:
             simple_path.append({'from_id': current_leg_start_id, 'to_id': full_path_ids[i-1], 'method': current_method})
             current_leg_start_id = full_path_ids[i-1]; current_method = step_method
-    simple_path.append({'from_id': current_leg_start_id, 'to_id': full_path_ids[-end], 'method': current_method})
+    simple_path.append({'from_id': current_leg_start_id, 'to_id': full_path_ids[-1], 'method': current_method})
     return jsonify({'path': full_path_ids, 'simple_path': simple_path, 'distance': total_distance})
 
-# CORRECTED: The setup function is called at the top level
+# This call ensures the database is set up when the app starts.
 setup_database_if_needed()
 
 if __name__ == '__main__':
