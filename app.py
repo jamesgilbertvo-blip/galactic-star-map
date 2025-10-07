@@ -27,6 +27,7 @@ FACTION_API_URL = "https://play.textspaced.com/api/faction/info/"
 
 # --- DATABASE CONNECTION & SETUP ---
 def get_db_connection():
+    """Connects to PostgreSQL if DATABASE_URL is set, otherwise SQLite."""
     if DATABASE_URL:
         conn = psycopg2.connect(DATABASE_URL)
         return conn, conn.cursor(cursor_factory=RealDictCursor)
@@ -36,6 +37,7 @@ def get_db_connection():
         return conn, conn.cursor()
 
 def setup_database_if_needed():
+    """Creates the database schema if tables don't exist."""
     conn, cursor = get_db_connection()
     pg_compat = bool(DATABASE_URL)
     try:
@@ -46,19 +48,34 @@ def setup_database_if_needed():
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
             table_exists = cursor.fetchone()
         
-        if table_exists: conn.close(); return
-    except (sqlite3.OperationalError, psycopg2.Error): conn.rollback() 
+        if table_exists:
+            print("Database tables already exist.")
+            conn.close()
+            return
+    except (sqlite3.OperationalError, psycopg2.Error) as e:
+        print(f"Error checking for tables, assuming they need creation: {e}")
+        conn.rollback() 
+    
+    print("Database tables not found. Creating schema...")
     
     user_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
     faction_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
 
     cursor.execute(f'CREATE TABLE factions (id {faction_id_type}, name TEXT UNIQUE NOT NULL)')
-    cursor.execute(f'CREATE TABLE users (id {user_id_type}, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, api_key TEXT, faction_id INTEGER NOT NULL REFERENCES factions(id), is_admin BOOLEAN DEFAULT FALSE NOT NULL)')
+    cursor.execute(f'''
+    CREATE TABLE users (
+        id {user_id_type},
+        username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, api_key TEXT,
+        faction_id INTEGER NOT NULL REFERENCES factions(id),
+        is_admin BOOLEAN DEFAULT FALSE NOT NULL
+    )''')
     cursor.execute('CREATE TABLE systems (id INTEGER PRIMARY KEY, name TEXT NOT NULL, x REAL NOT NULL, y REAL NOT NULL, position REAL NOT NULL UNIQUE, catapult_radius REAL DEFAULT 0)')
     cursor.execute('CREATE TABLE faction_discovered_systems (faction_id INTEGER NOT NULL REFERENCES factions(id), system_id INTEGER NOT NULL REFERENCES systems(id), PRIMARY KEY (faction_id, system_id))')
     cursor.execute('CREATE TABLE wormholes (system_a_id INTEGER NOT NULL REFERENCES systems(id), system_b_id INTEGER NOT NULL REFERENCES systems(id), PRIMARY KEY (system_a_id, system_b_id))')
     
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
+    print("Database schema created.")
 
 # --- Admin Decorator & Utilities ---
 def admin_required(f):
@@ -85,7 +102,8 @@ def sync_faction_database(current_system_data, systems_data, wormholes_data, str
     conn, cursor = get_db_connection(); pg_compat = bool(DATABASE_URL); param = '%s' if pg_compat else '?'
     all_systems = {}
     if current_system_data and 'system' in current_system_data:
-        for sys_id, sys_info in current_system_data['system'].items(): all_systems[int(sys_id)] = {'system_id': int(sys_id), 'system_name': sys_info['system_name'], 'system_position': sys_info['system_position']}
+        for sys_id, sys_info in current_system_data['system'].items():
+            all_systems[int(sys_id)] = {'system_id': int(sys_id), 'system_name': sys_info['system_name'], 'system_position': sys_info['system_position']}
     if systems_data:
         for s in systems_data: all_systems[s['system_id']] = s
     if wormholes_data and 'stable' in wormholes_data:
@@ -94,9 +112,11 @@ def sync_faction_database(current_system_data, systems_data, wormholes_data, str
             if wh['from_system_id'] not in all_systems: all_systems[wh['from_system_id']] = {'system_id': wh['from_system_id'], 'system_name': wh['from_system_name'], 'system_position': wh['from_system_position']}
             if wh['to_system_id'] not in all_systems: all_systems[wh['to_system_id']] = {'system_id': wh['to_system_id'], 'system_name': wh['to_system_name'], 'system_position': wh['to_system_position']}
     if not all_systems: conn.close(); return
+    
     systems_to_insert = [(s['system_id'], s.get('system_name', 'Unknown'), *get_spiral_coords(s.get('system_position')), s.get('system_position')) for s in all_systems.values()]
     if pg_compat: cursor.executemany(f'INSERT INTO systems (id, name, x, y, position) VALUES ({param}, {param}, {param}, {param}, {param}) ON CONFLICT(id) DO NOTHING', systems_to_insert)
     else: cursor.executemany('INSERT OR IGNORE INTO systems (id, name, x, y, position) VALUES (?, ?, ?, ?, ?)', systems_to_insert)
+    
     if structures_data and current_system_data and 'system' in current_system_data:
         current_system_id = int(list(current_system_data['system'].keys())[0]); max_catapult_radius = 0
         if isinstance(structures_data, dict):
@@ -105,15 +125,18 @@ def sync_faction_database(current_system_data, systems_data, wormholes_data, str
                     current_radius = structure.get("quantity", 0)
                     if current_radius > max_catapult_radius: max_catapult_radius = current_radius
         cursor.execute(f"UPDATE systems SET catapult_radius = {param} WHERE id = {param}", (max_catapult_radius, current_system_id))
+    
     faction_systems_to_link = [(faction_id, sys_id) for sys_id in all_systems.keys()]
     if pg_compat: cursor.executemany(f'INSERT INTO faction_discovered_systems (faction_id, system_id) VALUES ({param}, {param}) ON CONFLICT DO NOTHING', faction_systems_to_link)
     else: cursor.executemany('INSERT OR IGNORE INTO faction_discovered_systems (faction_id, system_id) VALUES (?, ?)', faction_systems_to_link)
+    
     if wormholes_data and 'stable' in wormholes_data:
         stable_wormholes = wormholes_data['stable'].values() if isinstance(wormholes_data['stable'], dict) else wormholes_data['stable']
         wormholes_to_insert = [(min(wh['from_system_id'], wh['to_system_id']), max(wh['from_system_id'], wh['to_system_id'])) for wh in stable_wormholes]
         if pg_compat: cursor.executemany(f'INSERT INTO wormholes (system_a_id, system_b_id) VALUES ({param}, {param}) ON CONFLICT DO NOTHING', wormholes_to_insert)
         else: cursor.executemany('INSERT OR IGNORE INTO wormholes (system_a_id, system_b_id) VALUES (?, ?)', wormholes_to_insert)
     conn.commit(); conn.close()
+    print(f"Database updated for faction ID {faction_id}.")
 
 # --- ROUTES ---
 @app.route('/api/sync', methods=['POST'])
@@ -183,7 +206,7 @@ def profile():
     user_id = session['user_id']; conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
     if request.method == 'GET':
         cursor.execute(f"SELECT api_key FROM users WHERE id = {param}", (user_id,)); user = cursor.fetchone(); conn.close()
-        return jsonify({'api_key': user['api_key'] if user else ''})
+        return jsonify(dict(user) if user else {})
     elif request.method == 'POST':
         data = request.get_json(); updates, params = [], []
         if data.get('api_key'): updates.append("api_key = %s"); params.append(data.get('api_key'))
