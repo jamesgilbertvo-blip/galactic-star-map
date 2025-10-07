@@ -10,7 +10,6 @@
         canvas { cursor: grab; background-color: #1f2937; border-radius: 0.5rem; }
         canvas:active { cursor: grabbing; }
         .hidden { display: none; }
-        /* Style for the active input field */
         input:focus {
             box-shadow: 0 0 0 2px #4f46e5; /* Indigo focus ring */
         }
@@ -19,7 +18,7 @@
 </head>
 <body class="h-screen antialiased">
 
-    <!-- Login, Register, Profile Views (unchanged) -->
+    <!-- Login, Register, Profile Views -->
     <div id="login-view" class="flex items-center justify-center h-full">
         <div class="w-full max-w-md p-8 space-y-8 bg-gray-900 rounded-lg shadow-lg">
             <div><h2 class="text-3xl font-extrabold text-center text-white">Sign In</h2><p class="mt-2 text-sm text-center text-gray-400">to view your star map</p></div>
@@ -79,7 +78,6 @@
                         <label for="toggle-all-catapults" class="ml-2 block text-sm text-gray-300">Show All Catapult Ranges</label>
                     </div>
                     <p class="text-xs text-gray-500">Shift+Click a system to toggle its range.</p>
-                    <!-- NEW: Reset View Button -->
                     <button id="reset-view-button" class="mt-2 w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-md text-sm">Reset View</button>
                 </div>
             </div>
@@ -106,23 +104,7 @@
         const openProfile = async () => { dom.profileStatus.textContent = ''; dom.newPasswordInput.value = ''; const r=await apiFetch('/api/profile'); const d=await r.json(); dom.apiKeyInput.value = d.api_key || ''; dom.profileView.classList.remove('hidden'); };
         const closeProfile = () => dom.profileView.classList.add('hidden');
         const handleProfileUpdate = async (e) => { e.preventDefault(); dom.profileStatus.textContent = 'Saving...'; const p={}; if (dom.apiKeyInput.value) p.api_key = dom.apiKeyInput.value; if (dom.newPasswordInput.value) p.password = dom.newPasswordInput.value; const r=await apiFetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); const d=await r.json(); dom.profileStatus.textContent = d.message; setTimeout(closeProfile, 2000); };
-        
-        async function fetchMapData(shouldFit = true) { 
-            const r = await apiFetch('/api/systems'); 
-            if (!r.ok) { 
-                if (r.status === 401) handleLogout(); 
-                return; 
-            } 
-            const d = await r.json(); 
-            systems = d.systems; 
-            wormholes = d.wormholes; 
-            populateDataList(); 
-            if (shouldFit) {
-                fitMapToView();
-            }
-            drawMap(); 
-        }
-
+        async function fetchMapData(shouldFit = true) { const r = await apiFetch('/api/systems'); if (!r.ok) { if (r.status === 401) handleLogout(); return; } const d = await r.json(); systems = d.systems; wormholes = d.wormholes; populateDataList(); if (shouldFit) { fitMapToView(); } drawMap(); }
         async function findPath(startId, endId) { const r = await apiFetch('/api/path', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ start_id: startId, end_id: endId }), }); displayPathResults(await r.json()); }
 
         function showLoginView() { dom.mapView.classList.add('hidden'); dom.registerView.classList.add('hidden'); dom.loginView.classList.remove('hidden'); }
@@ -133,15 +115,10 @@
             let adminBtn = document.getElementById('admin-button');
             if (isAdmin && !adminBtn) { adminBtn = document.createElement('a'); adminBtn.id = 'admin-button'; adminBtn.href = '/admin'; adminBtn.textContent = 'Admin'; adminBtn.className = 'px-3 py-1 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700'; dom.userControls.prepend(adminBtn); } 
             else if (!isAdmin && adminBtn) { adminBtn.remove(); }
-            
             resizeCanvas(); 
             const savedView = localStorage.getItem('mapViewTransform');
-            if (savedView) {
-                viewTransform = JSON.parse(savedView);
-                fetchMapData(false);
-            } else {
-                fetchMapData(true);
-            }
+            if (savedView) { viewTransform = JSON.parse(savedView); fetchMapData(false); } 
+            else { fetchMapData(true); }
         }
         function populateDataList() { dom.systemDataList.innerHTML = ''; const n=Object.values(systems).map(s=>s.name).sort(); n.forEach(name => { const o=document.createElement('option'); o.value=name; dom.systemDataList.appendChild(o); }); }
         
