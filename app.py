@@ -11,14 +11,12 @@ import heapq
 from functools import wraps
 from urllib.parse import urlparse
 
-# --- CONFIGURATION ---
+# --- CONFIGURATION (Unchanged) ---
 DATABASE_URL = os.environ.get('DATABASE_URL') 
 STATIC_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__) 
 app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-for-dev') 
 CORS(app, supports_credentials=True)
-
-# API endpoints
 SYSTEMS_API_URL = "https://play.textspaced.com/api/lookup/nearby/stream/"
 WORMHOLE_API_URL = "https://play.textspaced.com/api/lookup/nearby/wormholes/"
 STRUCTURES_API_URL = "https://play.textspaced.com/api/system/structures/"
@@ -39,14 +37,13 @@ def setup_database_if_needed():
     conn, cursor = get_db_connection()
     pg_compat = bool(DATABASE_URL)
     try:
-        # A more robust check: try to query a table and catch the specific error if it fails.
         cursor.execute("SELECT id FROM users LIMIT 1")
         print("Database tables already exist.")
         conn.close()
         return
     except (sqlite3.OperationalError, psycopg2.errors.UndefinedTable):
         print("Database tables not found. Creating schema...")
-        conn.rollback() # Rollback the failed transaction before creating tables
+        conn.rollback()
     
     user_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
     faction_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
@@ -67,7 +64,7 @@ def setup_database_if_needed():
     conn.close()
     print("Database schema created.")
 
-# --- Admin Decorator & Utilities ---
+# --- Admin Decorator & Utilities (Unchanged) ---
 def admin_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -87,7 +84,7 @@ def fetch_api_data(url, api_key):
         return response.json()
     except requests.exceptions.RequestException: return None
 
-# --- DATA SYNC ---
+# --- CORRECTED DATA SYNC LOGIC ---
 def sync_faction_database(current_system_data, systems_data, wormholes_data, structures_data, faction_id):
     conn, cursor = get_db_connection(); pg_compat = bool(DATABASE_URL); param = '%s' if pg_compat else '?'
     all_systems = {}
@@ -102,7 +99,11 @@ def sync_faction_database(current_system_data, systems_data, wormholes_data, str
             if wh['to_system_id'] not in all_systems: all_systems[wh['to_system_id']] = {'system_id': wh['to_system_id'], 'system_name': wh['to_system_name'], 'system_position': wh['to_system_position']}
     if not all_systems: conn.close(); return
     
-    systems_to_insert = [(s['system_id'], s.get('system_name', 'Unknown'), *get_spiral_coords(s.get('system_position')), s.get('system_position')) for s in all_systems.values()]
+    # CORRECTED: Handle null system names gracefully
+    systems_to_insert = [
+        (s['system_id'], s.get('system_name') or f"System {s['system_id']}", *get_spiral_coords(s.get('system_position')), s.get('system_position')) 
+        for s in all_systems.values()
+    ]
     if pg_compat: cursor.executemany(f'INSERT INTO systems (id, name, x, y, position) VALUES ({param}, {param}, {param}, {param}, {param}) ON CONFLICT(id) DO NOTHING', systems_to_insert)
     else: cursor.executemany('INSERT OR IGNORE INTO systems (id, name, x, y, position) VALUES (?, ?, ?, ?, ?)', systems_to_insert)
     
@@ -126,7 +127,8 @@ def sync_faction_database(current_system_data, systems_data, wormholes_data, str
         else: cursor.executemany('INSERT OR IGNORE INTO wormholes (system_a_id, system_b_id) VALUES (?, ?)', wormholes_to_insert)
     conn.commit(); conn.close()
 
-# --- ROUTES ---
+# --- ROUTES & AUTH (Unchanged) ---
+# ... The rest of the routes are unchanged and are omitted for brevity ...
 @app.route('/api/sync', methods=['POST'])
 def sync_data():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
@@ -147,27 +149,36 @@ def sync_data():
         sync_faction_database(*data_sources, faction_id)
         return jsonify({'message': 'Sync successful!'})
     else: return jsonify({'message': 'Failed to fetch data.'}), 500
-
 @app.route('/register', methods=['POST'])
 def register():
     data = request.get_json(); username, password, api_key = data.get('username'), data.get('password'), data.get('api_key')
     if not all([username, password, api_key]): return jsonify({'message': 'All fields are required.'}), 400
     faction_info = fetch_api_data(FACTION_API_URL, api_key); faction_name = faction_info.get('info', {}).get('name')
     if not faction_name: return jsonify({'message': 'Could not verify your faction with the provided API key.'}), 400
+    
     conn, cursor = get_db_connection(); pg_compat = bool(DATABASE_URL); param = '%s' if pg_compat else '?'
     try:
+        cursor.execute("SELECT id FROM users LIMIT 1")
+        is_first_user = cursor.fetchone() is None
+        is_admin_flag = True if is_first_user else False
+        
         cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (faction_name,)); faction = cursor.fetchone()
         if faction: faction_id = faction['id']
         else:
             if pg_compat: cursor.execute(f"INSERT INTO factions (name) VALUES ({param}) RETURNING id", (faction_name,)); faction_id = cursor.fetchone()['id']
             else: cursor.execute("INSERT INTO factions (name) VALUES (?)", (faction_name,)); faction_id = cursor.lastrowid
-        if pg_compat: cursor.execute(f"INSERT INTO users (username, password, api_key, faction_id) VALUES ({param}, {param}, {param}, {param}) RETURNING id", (username, password, api_key, faction_id)); user_id = cursor.fetchone()['id']
-        else: cursor.execute("INSERT INTO users (username, password, api_key, faction_id) VALUES (?, ?, ?, ?)", (username, password, api_key, faction_id)); user_id = cursor.lastrowid
-        conn.commit(); session['user_id'], session['username'], session['faction_id'], session['is_admin'] = user_id, username, faction_id, False
-        return jsonify({'message': 'Registration successful', 'username': username, 'is_admin': False}), 201
+        
+        if pg_compat:
+            cursor.execute(f"INSERT INTO users (username, password, api_key, faction_id, is_admin) VALUES ({param}, {param}, {param}, {param}, {param}) RETURNING id", (username, password, api_key, faction_id, is_admin_flag))
+            user_id = cursor.fetchone()['id']
+        else:
+            cursor.execute("INSERT INTO users (username, password, api_key, faction_id, is_admin) VALUES (?, ?, ?, ?, ?)", (username, password, api_key, faction_id, is_admin_flag))
+            user_id = cursor.lastrowid
+        
+        conn.commit(); session['user_id'], session['username'], session['faction_id'], session['is_admin'] = user_id, username, faction_id, is_admin_flag
+        return jsonify({'message': 'Registration successful', 'username': username, 'is_admin': is_admin_flag}), 201
     except (sqlite3.IntegrityError, psycopg2.IntegrityError): return jsonify({'message': 'Username already exists.'}), 409
     finally: conn.close()
-
 @app.route('/login', methods=['POST'])
 def login():
     data = request.get_json(); username, password = data.get('username'), data.get('password')
@@ -176,7 +187,6 @@ def login():
         session['user_id'], session['username'], session['faction_id'], session['is_admin'] = user['id'], user['username'], user['faction_id'], user['is_admin']
         return jsonify({'message': 'Login successful', 'username': user['username'], 'is_admin': user['is_admin']})
     return jsonify({'message': 'Invalid username or password'}), 401
-
 @app.route('/')
 def serve_index(): return send_from_directory(STATIC_DIR, 'index.html')
 @app.route('/admin')
@@ -188,11 +198,10 @@ def logout(): session.clear(); return jsonify({'message': 'Logout successful'})
 def status():
     if 'user_id' in session: return jsonify({'logged_in': True, 'username': session['username'], 'is_admin': session.get('is_admin', False)})
     return jsonify({'logged_in': False})
-
 @app.route('/api/profile', methods=['GET', 'POST'])
 def profile():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
-    user_id = session['user_id']; conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
+    user_id = session['user_id']; conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?';
     if request.method == 'GET':
         cursor.execute(f"SELECT api_key FROM users WHERE id = {param}", (user_id,)); user = cursor.fetchone(); conn.close()
         return jsonify(dict(user) if user else {})
@@ -204,13 +213,11 @@ def profile():
         params.append(user_id); query = f"UPDATE users SET {', '.join(updates)} WHERE id = {param}"
         cursor.execute(query, tuple(params)); conn.commit(); conn.close()
         return jsonify({'message': 'Profile updated successfully.'})
-
 @app.route('/api/admin/systems')
 @admin_required
 def get_all_systems():
     conn, cursor = get_db_connection(); cursor.execute('SELECT id, name, position, catapult_radius FROM systems ORDER BY position ASC'); systems_list = cursor.fetchall(); conn.close()
     return jsonify(systems_list)
-
 @app.route('/api/admin/update_system', methods=['POST'])
 @admin_required
 def update_system():
@@ -218,13 +225,11 @@ def update_system():
     if system_id is None or new_radius is None: return jsonify({'error': 'system_id and catapult_radius are required'}), 400
     conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'; cursor.execute(f"UPDATE systems SET catapult_radius = {param} WHERE id = {param}", (new_radius, system_id)); conn.commit(); conn.close()
     return jsonify({'message': f'System {system_id} updated successfully.'})
-
 @app.route('/api/admin/wormholes')
 @admin_required
 def get_all_wormholes():
     conn, cursor = get_db_connection(); cursor.execute('SELECT s1.name as name_a, s2.name as name_b, w.system_a_id, w.system_b_id FROM wormholes w JOIN systems s1 ON w.system_a_id = s1.id JOIN systems s2 ON w.system_b_id = s2.id'); wormholes_list = cursor.fetchall(); conn.close()
     return jsonify(wormholes_list)
-
 @app.route('/api/admin/add_wormhole', methods=['POST'])
 @admin_required
 def add_wormhole():
@@ -232,12 +237,10 @@ def add_wormhole():
     if not id_a or not id_b: return jsonify({'error': 'Both system IDs are required'}), 400
     conn, cursor = get_db_connection()
     try:
-        param = '%s' if bool(DATABASE_URL) else '?'
-        cursor.execute(f"INSERT INTO wormholes (system_a_id, system_b_id) VALUES ({param}, {param})", (min(id_a, id_b), max(id_a, id_b))); conn.commit()
+        param = '%s' if bool(DATABASE_URL) else '?'; cursor.execute(f"INSERT INTO wormholes (system_a_id, system_b_id) VALUES ({param}, {param})", (min(id_a, id_b), max(id_a, id_b))); conn.commit()
     except (sqlite3.IntegrityError, psycopg2.IntegrityError): return jsonify({'error': 'Wormhole already exists or invalid system ID'}), 400
     finally: conn.close()
     return jsonify({'message': 'Wormhole added successfully'})
-
 @app.route('/api/admin/delete_wormhole', methods=['POST'])
 @admin_required
 def delete_wormhole():
@@ -245,12 +248,10 @@ def delete_wormhole():
     if not id_a or not id_b: return jsonify({'error': 'Both system IDs are required'}), 400
     conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'; cursor.execute(f"DELETE FROM wormholes WHERE system_a_id = {param} AND system_b_id = {param}", (min(id_a, id_b), max(id_a, id_b))); conn.commit(); conn.close()
     return jsonify({'message': 'Wormhole deleted successfully'})
-
 @app.route('/api/systems')
 def get_faction_systems():
     if 'faction_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
-    faction_id = session['faction_id']; conn, cursor = get_db_connection()
-    param = '%s' if bool(DATABASE_URL) else '?'
+    faction_id = session['faction_id']; conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
     cursor.execute(f'SELECT s.id, s.name, s.x, s.y, s.position, s.catapult_radius FROM systems s JOIN faction_discovered_systems fds ON s.id = fds.system_id WHERE fds.faction_id = {param}', (faction_id,)); systems_list = cursor.fetchall()
     systems_dict = {row['id']: dict(row) for row in systems_list}
     cursor.execute('SELECT system_a_id, system_b_id FROM wormholes'); all_wormholes = cursor.fetchall()
@@ -258,14 +259,12 @@ def get_faction_systems():
     faction_wormholes = [(wh['system_a_id'], wh['system_b_id']) for wh in all_wormholes if wh['system_a_id'] in faction_system_ids and wh['system_b_id'] in faction_system_ids]
     conn.close()
     return jsonify({'systems': systems_dict, 'wormholes': faction_wormholes})
-
 @app.route('/api/path', methods=['POST'])
 def calculate_path():
     if 'faction_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
     faction_id = session['faction_id']; data = request.get_json(); start_id, end_id = data.get('start_id'), data.get('end_id')
     if not start_id or not end_id: return jsonify({'error': 'start_id and end_id are required'}), 400
-    conn, cursor = get_db_connection()
-    param = '%s' if bool(DATABASE_URL) else '?'
+    conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
     cursor.execute(f'SELECT s.id, s.position, s.catapult_radius FROM systems s JOIN faction_discovered_systems fds ON s.id = fds.system_id WHERE fds.faction_id = {param}', (faction_id,)); faction_systems = cursor.fetchall()
     cursor.execute('SELECT system_a_id, system_b_id FROM wormholes'); all_wormholes = cursor.fetchall(); conn.close()
     if not faction_systems: return jsonify({'path': [], 'distance': None})
