@@ -1,7 +1,7 @@
 from flask import Flask, jsonify, request, session, send_from_directory
 from flask_cors import CORS
 import sqlite3
-import psycopg2 
+import psycopg2
 from psycopg2.extras import RealDictCursor
 import math
 import os
@@ -12,10 +12,10 @@ from functools import wraps
 from urllib.parse import urlparse
 
 # --- CONFIGURATION ---
-DATABASE_URL = os.environ.get('DATABASE_URL') 
+DATABASE_URL = os.environ.get('DATABASE_URL')
 STATIC_DIR = os.path.dirname(os.path.abspath(__file__))
-app = Flask(__name__) 
-app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-for-dev') 
+app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-for-dev')
 CORS(app, supports_credentials=True)
 
 # API endpoints
@@ -116,7 +116,7 @@ def sync_faction_database(current_system_data, systems_data, wormholes_data, str
         cursor.execute(f"UPDATE systems SET catapult_radius = {param} WHERE id = {param}", (max_catapult_radius, current_system_id))
     
     faction_systems_to_link = [(faction_id, sys_id) for sys_id in all_systems.keys()]
-   if pg_compat:
+    if pg_compat:
         cursor.executemany(f'INSERT INTO faction_discovered_systems (faction_id, system_id) VALUES ({param}, {param}) ON CONFLICT (faction_id, system_id) DO NOTHING', faction_systems_to_link)
     else:
         cursor.executemany('INSERT OR IGNORE INTO faction_discovered_systems (faction_id, system_id) VALUES (?, ?)', faction_systems_to_link)
@@ -341,4 +341,3 @@ setup_database_if_needed()
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
-
