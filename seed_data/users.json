@@ -1,0 +1,10 @@
+[
+    {
+        "id": 1,
+        "username": "test",
+        "password": "test",
+        "api_key": "3560673d0c0b98718",
+        "faction_id": 1,
+        "is_admin": 1
+    }
+]

@@ -36,19 +36,22 @@ def get_db_connection():
         return conn, conn.cursor()
 
 def setup_database_if_needed():
+    # This function is now only for local development.
+    # The initial setup on Render is handled by the first deployment.
+    if DATABASE_URL: return
+    
     conn, cursor = get_db_connection()
-    pg_compat = bool(DATABASE_URL)
     try:
         cursor.execute("SELECT id FROM users LIMIT 1")
         print("Database tables already exist.")
         conn.close()
         return
-    except (sqlite3.OperationalError, psycopg2.errors.UndefinedTable):
+    except sqlite3.OperationalError:
         print("Database tables not found. Creating schema...")
         conn.rollback()
     
-    user_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
-    faction_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
+    user_id_type = 'INTEGER PRIMARY KEY AUTOINCREMENT'
+    faction_id_type = 'INTEGER PRIMARY KEY AUTOINCREMENT'
 
     cursor.execute(f'CREATE TABLE factions (id {faction_id_type}, name TEXT UNIQUE NOT NULL)')
     cursor.execute(f'''
@@ -56,8 +59,8 @@ def setup_database_if_needed():
         id {user_id_type},
         username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, api_key TEXT,
         faction_id INTEGER NOT NULL REFERENCES factions(id),
-        is_admin BOOLEAN DEFAULT FALSE NOT NULL,
-        is_developer BOOLEAN DEFAULT FALSE NOT NULL
+        is_admin BOOLEAN DEFAULT 0 NOT NULL,
+        is_developer BOOLEAN DEFAULT 0 NOT NULL
     )''')
     cursor.execute('CREATE TABLE systems (id INTEGER PRIMARY KEY, name TEXT NOT NULL, x REAL NOT NULL, y REAL NOT NULL, position REAL NOT NULL UNIQUE, catapult_radius REAL DEFAULT 0)')
     cursor.execute('CREATE TABLE faction_discovered_systems (faction_id INTEGER NOT NULL REFERENCES factions(id), system_id INTEGER NOT NULL REFERENCES systems(id), PRIMARY KEY (faction_id, system_id))')
@@ -209,7 +212,7 @@ def status():
 @app.route('/api/profile', methods=['GET', 'POST'])
 def profile():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
-    user_id = session['user_id']; conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
+    user_id = session['user_id']; conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?';
     if request.method == 'GET':
         cursor.execute(f"SELECT api_key FROM users WHERE id = {param}", (user_id,)); user = cursor.fetchone(); conn.close()
         return jsonify(dict(user) if user else {})
@@ -334,6 +337,7 @@ def calculate_path():
     simple_path.append({'from_id': current_leg_start_id, 'to_id': full_path_ids[-1], 'method': current_method})
     return jsonify({'path': full_path_ids, 'simple_path': simple_path, 'distance': total_distance})
 
+# This call ensures the database is set up when the app starts.
 setup_database_if_needed()
 
 if __name__ == '__main__':

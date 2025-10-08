@@ -1,0 +1,82 @@
+[
+    {
+        "id": 1757,
+        "name": "Roshambo",
+        "x": 186.85238902420113,
+        "y": -359.00482324886474,
+        "position": 8094.4,
+        "catapult_radius": 0.0
+    },
+    {
+        "id": 1758,
+        "name": "Sighing Desert",
+        "x": 193.99943089845036,
+        "y": -355.2050023733864,
+        "position": 8094.6,
+        "catapult_radius": 0.0
+    },
+    {
+        "id": 1768,
+        "name": "Raschil",
+        "x": -185.69435242961038,
+        "y": -362.60191077922855,
+        "position": 8147.7,
+        "catapult_radius": 0.0
+    },
+    {
+        "id": 1769,
+        "name": "Broadway",
+        "x": -171.0540050133465,
+        "y": -369.75581319824306,
+        "position": 8148.1,
+        "catapult_radius": 0.0
+    },
+    {
+        "id": 1770,
+        "name": "Slave Colony 111",
+        "x": -152.36949309970282,
+        "y": -377.8660377336651,
+        "position": 8148.6,
+        "catapult_radius": 0.0
+    },
+    {
+        "id": 1775,
+        "name": "Red Archer",
+        "x": 261.7826673194383,
+        "y": 314.0446928641214,
+        "position": 8176.9,
+        "catapult_radius": 0.0
+    },
+    {
+        "id": 1778,
+        "name": "c8311269-489a-11eb-bfd4-bc764e085dbc",
+        "x": 186.98947846428894,
+        "y": 363.701975480823,
+        "position": 8179.1,
+        "catapult_radius": 0.0
+    },
+    {
+        "id": 1779,
+        "name": "Black Magic",
+        "x": 402.63813765656124,
+        "y": -84.67300708877661,
+        "position": 8228.9,
+        "catapult_radius": 0.0
+    },
+    {
+        "id": 1780,
+        "name": "Jadmar",
+        "x": 404.78711141601826,
+        "y": 74.79895742238632,
+        "position": 8232.8,
+        "catapult_radius": 0.0
+    },
+    {
+        "id": 1786,
+        "name": "Ruby Queen",
+        "x": -360.5420704309972,
+        "y": -202.20857072421492,
+        "position": 8267.5,
+        "catapult_radius": 0.0
+    }
+]
