@@ -100,8 +100,10 @@ def sync_faction_database(current_system_data, systems_data, wormholes_data, str
         for wh in stable_wormholes:
             if wh['from_system_id'] not in all_systems: all_systems[wh['from_system_id']] = {'system_id': wh['from_system_id'], 'system_name': wh['from_system_name'], 'system_position': wh['from_system_position']}
             if wh['to_system_id'] not in all_systems: all_systems[wh['to_system_id']] = {'system_id': wh['to_system_id'], 'system_name': wh['to_system_name'], 'system_position': wh['to_system_position']}
-    if not all_systems: conn.close(); return
-    
+    if not all_systems:
+        conn.close()
+        return 0 # Return 0 if no systems to process
+
     systems_to_insert = [(s['system_id'], s.get('system_name') or f"System {s['system_id']}", *get_spiral_coords(s.get('system_position')), s.get('system_position')) for s in all_systems.values()]
     if pg_compat: cursor.executemany(f'INSERT INTO systems (id, name, x, y, position) VALUES ({param}, {param}, {param}, {param}, {param}) ON CONFLICT(id) DO NOTHING', systems_to_insert)
     else: cursor.executemany('INSERT OR IGNORE INTO systems (id, name, x, y, position) VALUES (?, ?, ?, ?, ?)', systems_to_insert)
@@ -116,17 +118,23 @@ def sync_faction_database(current_system_data, systems_data, wormholes_data, str
         cursor.execute(f"UPDATE systems SET catapult_radius = {param} WHERE id = {param}", (max_catapult_radius, current_system_id))
     
     faction_systems_to_link = [(faction_id, sys_id) for sys_id in all_systems.keys()]
-    if pg_compat:
-        cursor.executemany(f'INSERT INTO faction_discovered_systems (faction_id, system_id) VALUES ({param}, {param}) ON CONFLICT (faction_id, system_id) DO NOTHING', faction_systems_to_link)
-    else:
-        cursor.executemany('INSERT OR IGNORE INTO faction_discovered_systems (faction_id, system_id) VALUES (?, ?)', faction_systems_to_link)
-    
+    links_inserted_count = 0
+    if faction_systems_to_link:
+        if pg_compat:
+            cursor.executemany(f'INSERT INTO faction_discovered_systems (faction_id, system_id) VALUES ({param}, {param}) ON CONFLICT (faction_id, system_id) DO NOTHING', faction_systems_to_link)
+        else:
+            cursor.executemany('INSERT OR IGNORE INTO faction_discovered_systems (faction_id, system_id) VALUES (?, ?)', faction_systems_to_link)
+        # Capture how many rows were actually inserted
+        links_inserted_count = cursor.rowcount if cursor.rowcount > 0 else 0
+
     if wormholes_data and 'stable' in wormholes_data:
         stable_wormholes = wormholes_data['stable'].values() if isinstance(wormholes_data['stable'], dict) else wormholes_data['stable']
         wormholes_to_insert = [(min(wh['from_system_id'], wh['to_system_id']), max(wh['from_system_id'], wh['to_system_id'])) for wh in stable_wormholes]
         if pg_compat: cursor.executemany(f'INSERT INTO wormholes (system_a_id, system_b_id) VALUES ({param}, {param}) ON CONFLICT DO NOTHING', wormholes_to_insert)
         else: cursor.executemany('INSERT OR IGNORE INTO wormholes (system_a_id, system_b_id) VALUES (?, ?)', wormholes_to_insert)
+
     conn.commit(); conn.close()
+    return links_inserted_count # Return the count
 
 # --- ROUTES ---
 @app.route('/api/sync', methods=['POST'])
@@ -146,9 +154,10 @@ def sync_data():
     conn.close()
     data_sources = [fetch_api_data(url, user['api_key']) for url in [CURRENT_SYSTEM_API_URL, SYSTEMS_API_URL, WORMHOLE_API_URL, STRUCTURES_API_URL]]
     if any(data_sources):
-        sync_faction_database(*data_sources, faction_id)
-        return jsonify({'message': 'Sync successful!'})
-    else: return jsonify({'message': 'Failed to fetch data.'}), 500
+        links_inserted = sync_faction_database(*data_sources, faction_id)
+        # Modify the success message to include our debug count
+        return jsonify({'message': f'Sync complete. Links created: {links_inserted}.'})
+    else: return jsonify({'message': 'Failed to fetch data from game API.'}), 500
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -268,11 +277,19 @@ def delete_wormhole():
 def get_systems_data():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
     conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
+    user_id = session['user_id']
     
     if session.get('is_developer'):
         cursor.execute('SELECT s.id, s.name, s.x, s.y, s.position, s.catapult_radius FROM systems s')
     else: # Admins and regular users see their faction's map
-        faction_id = session['faction_id']
+        # Fetch the guaranteed latest faction_id from the database
+        cursor.execute(f'SELECT faction_id FROM users WHERE id = {param}', (user_id,))
+        user_record = cursor.fetchone()
+        if not user_record:
+            conn.close()
+            return jsonify({'systems': {}, 'wormholes': []}) # User not found
+        
+        faction_id = user_record['faction_id']
         cursor.execute(f'SELECT s.id, s.name, s.x, s.y, s.position, s.catapult_radius FROM systems s JOIN faction_discovered_systems fds ON s.id = fds.system_id WHERE fds.faction_id = {param}', (faction_id,))
     
     systems_list = cursor.fetchall(); systems_dict = {row['id']: dict(row) for row in systems_list}
@@ -288,11 +305,19 @@ def calculate_path():
     data = request.get_json(); start_id, end_id = data.get('start_id'), data.get('end_id')
     if not start_id or not end_id: return jsonify({'error': 'start_id and end_id are required'}), 400
     conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
+    user_id = session['user_id']
 
     if session.get('is_developer'):
         cursor.execute('SELECT id, position, catapult_radius FROM systems')
     else: # Admins and regular users pathfind on their faction's map
-        faction_id = session['faction_id']
+        # Fetch the guaranteed latest faction_id from the database
+        cursor.execute(f'SELECT faction_id FROM users WHERE id = {param}', (user_id,))
+        user_record = cursor.fetchone()
+        if not user_record:
+            conn.close()
+            return jsonify({'path': [], 'distance': None}) # User not found
+            
+        faction_id = user_record['faction_id']
         cursor.execute(f'SELECT s.id, s.position, s.catapult_radius FROM systems s JOIN faction_discovered_systems fds ON s.id = fds.system_id WHERE fds.faction_id = {param}', (faction_id,))
     
     all_systems = cursor.fetchall()
