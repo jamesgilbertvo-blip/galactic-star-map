@@ -87,77 +87,102 @@ def fetch_api_data(url, api_key):
         return response.json()
     except requests.exceptions.RequestException: return None
 
-# --- DATA SYNC ---
-def sync_faction_database(current_system_data, systems_data, wormholes_data, structures_data, faction_id):
-    conn, cursor = get_db_connection(); pg_compat = bool(DATABASE_URL); param = '%s' if pg_compat else '?'
-    all_systems = {}
-    if current_system_data and 'system' in current_system_data:
-        for sys_id, sys_info in current_system_data['system'].items(): all_systems[int(sys_id)] = {'system_id': int(sys_id), 'system_name': sys_info['system_name'], 'system_position': sys_info['system_position']}
-    if systems_data:
-        for s in systems_data: all_systems[s['system_id']] = s
-    if wormholes_data and 'stable' in wormholes_data:
-        stable_wormholes = wormholes_data['stable'].values() if isinstance(wormholes_data['stable'], dict) else wormholes_data['stable']
-        for wh in stable_wormholes:
-            if wh['from_system_id'] not in all_systems: all_systems[wh['from_system_id']] = {'system_id': wh['from_system_id'], 'system_name': wh['from_system_name'], 'system_position': wh['from_system_position']}
-            if wh['to_system_id'] not in all_systems: all_systems[wh['to_system_id']] = {'system_id': wh['to_system_id'], 'system_name': wh['to_system_name'], 'system_position': wh['to_system_position']}
-    if not all_systems:
-        conn.close()
-        return 0 # Return 0 if no systems to process
-
-    systems_to_insert = [(s['system_id'], s.get('system_name') or f"System {s['system_id']}", *get_spiral_coords(s.get('system_position')), s.get('system_position')) for s in all_systems.values()]
-    if pg_compat: cursor.executemany(f'INSERT INTO systems (id, name, x, y, position) VALUES ({param}, {param}, {param}, {param}, {param}) ON CONFLICT(id) DO NOTHING', systems_to_insert)
-    else: cursor.executemany('INSERT OR IGNORE INTO systems (id, name, x, y, position) VALUES (?, ?, ?, ?, ?)', systems_to_insert)
-    
-    if structures_data and current_system_data and 'system' in current_system_data:
-        current_system_id = int(list(current_system_data['system'].keys())[0]); max_catapult_radius = 0
-        if isinstance(structures_data, dict):
-            for structure in structures_data.values():
-                if structure and isinstance(structure, dict) and structure.get("type_name") == "Null Space Catapult":
-                    current_radius = structure.get("quantity", 0)
-                    if current_radius > max_catapult_radius: max_catapult_radius = current_radius
-        cursor.execute(f"UPDATE systems SET catapult_radius = {param} WHERE id = {param}", (max_catapult_radius, current_system_id))
-    
-    faction_systems_to_link = [(faction_id, sys_id) for sys_id in all_systems.keys()]
-    links_inserted_count = 0
-    if faction_systems_to_link:
-        if pg_compat:
-            cursor.executemany(f'INSERT INTO faction_discovered_systems (faction_id, system_id) VALUES ({param}, {param}) ON CONFLICT (faction_id, system_id) DO NOTHING', faction_systems_to_link)
-        else:
-            cursor.executemany('INSERT OR IGNORE INTO faction_discovered_systems (faction_id, system_id) VALUES (?, ?)', faction_systems_to_link)
-        # Capture how many rows were actually inserted
-        links_inserted_count = cursor.rowcount if cursor.rowcount > 0 else 0
-
-    if wormholes_data and 'stable' in wormholes_data:
-        stable_wormholes = wormholes_data['stable'].values() if isinstance(wormholes_data['stable'], dict) else wormholes_data['stable']
-        wormholes_to_insert = [(min(wh['from_system_id'], wh['to_system_id']), max(wh['from_system_id'], wh['to_system_id'])) for wh in stable_wormholes]
-        if pg_compat: cursor.executemany(f'INSERT INTO wormholes (system_a_id, system_b_id) VALUES ({param}, {param}) ON CONFLICT DO NOTHING', wormholes_to_insert)
-        else: cursor.executemany('INSERT OR IGNORE INTO wormholes (system_a_id, system_b_id) VALUES (?, ?)', wormholes_to_insert)
-
-    conn.commit(); conn.close()
-    return links_inserted_count # Return the count
-
 # --- ROUTES ---
 @app.route('/api/sync', methods=['POST'])
 def sync_data():
-    if 'user_id' not in session or session.get('is_developer'): return jsonify({'error': 'Not authenticated or developer accounts cannot sync'}), 401
-    user_id = session['user_id']; conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'; cursor.execute(f"SELECT api_key, faction_id FROM users WHERE id = {param}", (user_id,)); user = cursor.fetchone(); conn.close()
-    if not user or not user['api_key']: return jsonify({'message': 'API key not found.'}), 400
-    faction_info = fetch_api_data(FACTION_API_URL, user['api_key']); faction_name = faction_info.get('info', {}).get('name')
-    if not faction_name: return jsonify({'message': 'Could not verify faction.'}), 500
-    conn, cursor = get_db_connection(); cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (faction_name,)); faction_row = cursor.fetchone()
-    if faction_row: faction_id = faction_row['id']
-    else:
-        if bool(DATABASE_URL): cursor.execute(f"INSERT INTO factions (name) VALUES ({param}) RETURNING id", (faction_name,)); faction_id = cursor.fetchone()['id']
-        else: cursor.execute("INSERT INTO factions (name) VALUES (?)", (faction_name,)); faction_id = cursor.lastrowid
+    if 'user_id' not in session or session.get('is_developer'):
+        return jsonify({'error': 'Not authenticated or developer accounts cannot sync'}), 401
+    
+    conn, cursor = get_db_connection()
+    pg_compat = bool(DATABASE_URL)
+    param = '%s' if pg_compat else '?'
+    
+    try:
+        user_id = session['user_id']
+        cursor.execute(f"SELECT api_key, faction_id FROM users WHERE id = {param}", (user_id,))
+        user = cursor.fetchone()
+
+        if not user or not user['api_key']:
+            return jsonify({'message': 'API key not found.'}), 400
+
+        api_key = user['api_key']
+        faction_info = fetch_api_data(FACTION_API_URL, api_key)
+        faction_name = faction_info.get('info', {}).get('name')
+        if not faction_name:
+            return jsonify({'message': 'Could not verify faction with game API.'}), 500
+
+        cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (faction_name,))
+        faction_row = cursor.fetchone()
+
+        if faction_row:
+            faction_id = faction_row['id']
+        else:
+            if pg_compat:
+                cursor.execute(f"INSERT INTO factions (name) VALUES ({param}) RETURNING id", (faction_name,))
+                faction_id = cursor.fetchone()['id']
+            else:
+                cursor.execute("INSERT INTO factions (name) VALUES (?)", (faction_name,))
+                faction_id = cursor.lastrowid
+        
+        if user['faction_id'] != faction_id:
+            cursor.execute(f"UPDATE users SET faction_id = {param} WHERE id = {param}", (faction_id, user_id))
+            session['faction_id'] = faction_id
+        
+        # Fetch all game data before processing
+        current_system_data = fetch_api_data(CURRENT_SYSTEM_API_URL, api_key)
+        systems_data = fetch_api_data(SYSTEMS_API_URL, api_key)
+        wormholes_data = fetch_api_data(WORMHOLE_API_URL, api_key)
+        structures_data = fetch_api_data(STRUCTURES_API_URL, api_key)
+
+        if not any([current_system_data, systems_data, wormholes_data, structures_data]):
+             return jsonify({'message': 'Failed to fetch any data from game API.'}), 500
+
+        # --- Begin database updates within the single transaction ---
+        all_systems = {}
+        if current_system_data and 'system' in current_system_data:
+            for sys_id, sys_info in current_system_data['system'].items(): all_systems[int(sys_id)] = {'system_id': int(sys_id), 'system_name': sys_info['system_name'], 'system_position': sys_info['system_position']}
+        if systems_data:
+            for s in systems_data: all_systems[s['system_id']] = s
+        if wormholes_data and 'stable' in wormholes_data:
+            stable_wormholes = wormholes_data['stable'].values() if isinstance(wormholes_data['stable'], dict) else wormholes_data['stable']
+            for wh in stable_wormholes:
+                if wh['from_system_id'] not in all_systems: all_systems[wh['from_system_id']] = {'system_id': wh['from_system_id'], 'system_name': wh['from_system_name'], 'system_position': wh['from_system_position']}
+                if wh['to_system_id'] not in all_systems: all_systems[wh['to_system_id']] = {'system_id': wh['to_system_id'], 'system_name': wh['to_system_name'], 'system_position': wh['to_system_position']}
+        
+        if all_systems:
+            systems_to_insert = [(s['system_id'], s.get('system_name') or f"System {s['system_id']}", *get_spiral_coords(s.get('system_position')), s.get('system_position')) for s in all_systems.values()]
+            if pg_compat: cursor.executemany(f'INSERT INTO systems (id, name, x, y, position) VALUES ({param}, {param}, {param}, {param}, {param}) ON CONFLICT(id) DO NOTHING', systems_to_insert)
+            else: cursor.executemany('INSERT OR IGNORE INTO systems (id, name, x, y, position) VALUES (?, ?, ?, ?, ?)', systems_to_insert)
+
+            if structures_data and current_system_data and 'system' in current_system_data:
+                current_system_id = int(list(current_system_data['system'].keys())[0]); max_catapult_radius = 0
+                if isinstance(structures_data, dict):
+                    for structure in structures_data.values():
+                        if structure and isinstance(structure, dict) and structure.get("type_name") == "Null Space Catapult":
+                            current_radius = structure.get("quantity", 0)
+                            if current_radius > max_catapult_radius: max_catapult_radius = current_radius
+                cursor.execute(f"UPDATE systems SET catapult_radius = {param} WHERE id = {param}", (max_catapult_radius, current_system_id))
+
+            faction_systems_to_link = [(faction_id, sys_id) for sys_id in all_systems.keys()]
+            if pg_compat: cursor.executemany(f'INSERT INTO faction_discovered_systems (faction_id, system_id) VALUES ({param}, {param}) ON CONFLICT (faction_id, system_id) DO NOTHING', faction_systems_to_link)
+            else: cursor.executemany('INSERT OR IGNORE INTO faction_discovered_systems (faction_id, system_id) VALUES (?, ?)', faction_systems_to_link)
+            
+            if wormholes_data and 'stable' in wormholes_data:
+                stable_wormholes = wormholes_data['stable'].values() if isinstance(wormholes_data['stable'], dict) else wormholes_data['stable']
+                wormholes_to_insert = [(min(wh['from_system_id'], wh['to_system_id']), max(wh['from_system_id'], wh['to_system_id'])) for wh in stable_wormholes]
+                if pg_compat: cursor.executemany(f'INSERT INTO wormholes (system_a_id, system_b_id) VALUES ({param}, {param}) ON CONFLICT DO NOTHING', wormholes_to_insert)
+                else: cursor.executemany('INSERT OR IGNORE INTO wormholes (system_a_id, system_b_id) VALUES (?, ?)', wormholes_to_insert)
+        
         conn.commit()
-    if user['faction_id'] != faction_id: cursor.execute(f"UPDATE users SET faction_id = {param} WHERE id = {param}", (faction_id, user_id)); conn.commit(); session['faction_id'] = faction_id
-    conn.close()
-    data_sources = [fetch_api_data(url, user['api_key']) for url in [CURRENT_SYSTEM_API_URL, SYSTEMS_API_URL, WORMHOLE_API_URL, STRUCTURES_API_URL]]
-    if any(data_sources):
-        links_inserted = sync_faction_database(*data_sources, faction_id)
-        # Modify the success message to include our debug count
-        return jsonify({'message': f'Sync complete. Links created: {links_inserted}.'})
-    else: return jsonify({'message': 'Failed to fetch data from game API.'}), 500
+        return jsonify({'message': 'Sync successful!'})
+
+    except Exception as e:
+        conn.rollback()
+        print(f"ERROR in /api/sync: {e}", file=sys.stderr) # Log the actual error for debugging
+        return jsonify({'error': 'An internal error occurred during sync.'}), 500
+    finally:
+        if conn:
+            conn.close()
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -277,19 +302,11 @@ def delete_wormhole():
 def get_systems_data():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
     conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
-    user_id = session['user_id']
     
     if session.get('is_developer'):
         cursor.execute('SELECT s.id, s.name, s.x, s.y, s.position, s.catapult_radius FROM systems s')
     else: # Admins and regular users see their faction's map
-        # Fetch the guaranteed latest faction_id from the database
-        cursor.execute(f'SELECT faction_id FROM users WHERE id = {param}', (user_id,))
-        user_record = cursor.fetchone()
-        if not user_record:
-            conn.close()
-            return jsonify({'systems': {}, 'wormholes': []}) # User not found
-        
-        faction_id = user_record['faction_id']
+        faction_id = session['faction_id']
         cursor.execute(f'SELECT s.id, s.name, s.x, s.y, s.position, s.catapult_radius FROM systems s JOIN faction_discovered_systems fds ON s.id = fds.system_id WHERE fds.faction_id = {param}', (faction_id,))
     
     systems_list = cursor.fetchall(); systems_dict = {row['id']: dict(row) for row in systems_list}
@@ -305,19 +322,11 @@ def calculate_path():
     data = request.get_json(); start_id, end_id = data.get('start_id'), data.get('end_id')
     if not start_id or not end_id: return jsonify({'error': 'start_id and end_id are required'}), 400
     conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
-    user_id = session['user_id']
 
     if session.get('is_developer'):
         cursor.execute('SELECT id, position, catapult_radius FROM systems')
     else: # Admins and regular users pathfind on their faction's map
-        # Fetch the guaranteed latest faction_id from the database
-        cursor.execute(f'SELECT faction_id FROM users WHERE id = {param}', (user_id,))
-        user_record = cursor.fetchone()
-        if not user_record:
-            conn.close()
-            return jsonify({'path': [], 'distance': None}) # User not found
-            
-        faction_id = user_record['faction_id']
+        faction_id = session['faction_id']
         cursor.execute(f'SELECT s.id, s.position, s.catapult_radius FROM systems s JOIN faction_discovered_systems fds ON s.id = fds.system_id WHERE fds.faction_id = {param}', (faction_id,))
     
     all_systems = cursor.fetchall()
