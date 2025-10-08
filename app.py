@@ -36,39 +36,29 @@ def get_db_connection():
         return conn, conn.cursor()
 
 def setup_database_if_needed():
-    # This function is now only for local development.
-    # The initial setup on Render is handled by the first deployment.
-    if DATABASE_URL: return
-    
+    print("Checking database schema...")
     conn, cursor = get_db_connection()
-    try:
-        cursor.execute("SELECT id FROM users LIMIT 1")
-        print("Database tables already exist.")
-        conn.close()
-        return
-    except sqlite3.OperationalError:
-        print("Database tables not found. Creating schema...")
-        conn.rollback()
+    pg_compat = bool(DATABASE_URL)
     
-    user_id_type = 'INTEGER PRIMARY KEY AUTOINCREMENT'
-    faction_id_type = 'INTEGER PRIMARY KEY AUTOINCREMENT'
+    user_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
+    faction_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
 
-    cursor.execute(f'CREATE TABLE factions (id {faction_id_type}, name TEXT UNIQUE NOT NULL)')
+    cursor.execute(f'CREATE TABLE IF NOT EXISTS factions (id {faction_id_type}, name TEXT UNIQUE NOT NULL)')
     cursor.execute(f'''
-    CREATE TABLE users (
+    CREATE TABLE IF NOT EXISTS users (
         id {user_id_type},
         username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, api_key TEXT,
         faction_id INTEGER NOT NULL REFERENCES factions(id),
-        is_admin BOOLEAN DEFAULT 0 NOT NULL,
-        is_developer BOOLEAN DEFAULT 0 NOT NULL
+        is_admin BOOLEAN DEFAULT FALSE NOT NULL,
+        is_developer BOOLEAN DEFAULT FALSE NOT NULL
     )''')
-    cursor.execute('CREATE TABLE systems (id INTEGER PRIMARY KEY, name TEXT NOT NULL, x REAL NOT NULL, y REAL NOT NULL, position REAL NOT NULL UNIQUE, catapult_radius REAL DEFAULT 0)')
-    cursor.execute('CREATE TABLE faction_discovered_systems (faction_id INTEGER NOT NULL REFERENCES factions(id), system_id INTEGER NOT NULL REFERENCES systems(id), PRIMARY KEY (faction_id, system_id))')
-    cursor.execute('CREATE TABLE wormholes (system_a_id INTEGER NOT NULL REFERENCES systems(id), system_b_id INTEGER NOT NULL REFERENCES systems(id), PRIMARY KEY (system_a_id, system_b_id))')
+    cursor.execute('CREATE TABLE IF NOT EXISTS systems (id INTEGER PRIMARY KEY, name TEXT NOT NULL, x REAL NOT NULL, y REAL NOT NULL, position REAL NOT NULL UNIQUE, catapult_radius REAL DEFAULT 0)')
+    cursor.execute('CREATE TABLE IF NOT EXISTS faction_discovered_systems (faction_id INTEGER NOT NULL REFERENCES factions(id), system_id INTEGER NOT NULL REFERENCES systems(id), PRIMARY KEY (faction_id, system_id))')
+    cursor.execute('CREATE TABLE IF NOT EXISTS wormholes (system_a_id INTEGER NOT NULL REFERENCES systems(id), system_b_id INTEGER NOT NULL REFERENCES systems(id), PRIMARY KEY (system_a_id, system_b_id))')
     
     conn.commit()
     conn.close()
-    print("Database schema created.")
+    print("Database schema check complete.")
 
 # --- Admin Decorator & Utilities ---
 def admin_required(f):
@@ -193,8 +183,8 @@ def login():
     data = request.get_json(); username, password = data.get('username'), data.get('password')
     conn, cursor = get_db_connection(); cursor.execute(f"SELECT * FROM users WHERE username = {'%s' if bool(DATABASE_URL) else '?'}", (username,)); user = cursor.fetchone(); conn.close()
     if user and user['password'] == password:
-        session['user_id'], session['username'], session['faction_id'], session['is_admin'], session['is_developer'] = user['id'], user['username'], user['faction_id'], user['is_admin'], user['is_developer']
-        return jsonify({'message': 'Login successful', 'username': user['username'], 'is_admin': user['is_admin'], 'is_developer': user['is_developer']})
+        session['user_id'], session['username'], session['faction_id'], session['is_admin'], session['is_developer'] = user['id'], user['username'], user['faction_id'], user['is_admin'], user.get('is_developer', False)
+        return jsonify({'message': 'Login successful', 'username': user['username'], 'is_admin': user['is_admin'], 'is_developer': user.get('is_developer', False)})
     return jsonify({'message': 'Invalid username or password'}), 401
 
 @app.route('/')
