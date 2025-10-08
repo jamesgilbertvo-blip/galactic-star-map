@@ -11,14 +11,14 @@
         canvas:active { cursor: grabbing; }
         .hidden { display: none; }
         input:focus {
-            box-shadow: 0 0 0 2px #4f46e5;
+            box-shadow: 0 0 0 2px #4f46e5; /* Indigo focus ring */
         }
     </style>
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
 </head>
 <body class="h-screen antialiased">
 
-    <!-- Login, Profile Views (unchanged) -->
+    <!-- Login, Register, Profile Views (unchanged) -->
     <div id="login-view" class="flex items-center justify-center h-full">
         <div class="w-full max-w-md p-8 space-y-8 bg-gray-900 rounded-lg shadow-lg">
             <div><h2 class="text-3xl font-extrabold text-center text-white">Sign In</h2><p class="mt-2 text-sm text-center text-gray-400">to view your star map</p></div>
@@ -30,6 +30,17 @@
             <p class="text-sm text-center text-gray-400">Don't have an account? <button id="show-register-view-button" class="font-medium text-indigo-400 hover:text-indigo-300">Register</button></p>
         </div>
     </div>
+    <div id="register-view" class="hidden flex items-center justify-center h-full">
+        <div class="w-full max-w-md p-8 space-y-8 bg-gray-900 rounded-lg shadow-lg">
+            <div><h2 class="text-3xl font-extrabold text-center text-white">Create Account</h2><p class="mt-2 text-sm text-center text-gray-400">to start building your map</p></div>
+            <form id="register-form" class="mt-8 space-y-6">
+                <div class="rounded-md shadow-sm -space-y-px"><input id="register-username" name="username" type="text" required class="w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 rounded-t-md placeholder-gray-400 focus:outline-none focus:ring-indigo-500" placeholder="Username"><input id="register-password" name="password" type="password" required class="w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 placeholder-gray-400 focus:outline-none focus:ring-indigo-500" placeholder="Password"><input id="register-api-key" name="api_key" type="text" class="w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 rounded-b-md placeholder-gray-400 focus:outline-none focus:ring-indigo-500" placeholder="Game API Key (optional for devs)"></div>
+                <div><button type="submit" class="w-full px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700">Create Account</button></div>
+                 <p id="register-error" class="text-sm text-center text-red-400 h-4" aria-live="assertive"></p>
+            </form>
+            <p class="text-sm text-center text-gray-400">Already have an account? <button id="show-login-view-button" class="font-medium text-indigo-400 hover:text-indigo-300">Sign In</button></p>
+        </div>
+    </div>
     <div id="profile-view" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
         <div class="w-full max-w-md p-8 space-y-6 bg-gray-900 rounded-lg shadow-lg">
             <div class="flex justify-between items-center"><h2 class="text-2xl font-bold text-white">Manage Profile</h2><button id="close-profile-button" class="text-gray-400 hover:text-white">&times;</button></div>
@@ -39,23 +50,6 @@
                 <div><button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md">Save Changes</button></div>
                 <p id="profile-status" class="text-sm text-center h-4" aria-live="assertive"></p>
             </form>
-        </div>
-    </div>
-
-    <!-- UPDATED: Registration View with optional API key -->
-    <div id="register-view" class="hidden flex items-center justify-center h-full">
-        <div class="w-full max-w-md p-8 space-y-8 bg-gray-900 rounded-lg shadow-lg">
-            <div><h2 class="text-3xl font-extrabold text-center text-white">Create Account</h2><p class="mt-2 text-sm text-center text-gray-400">to start building your map</p></div>
-            <form id="register-form" class="mt-8 space-y-6">
-                <div class="rounded-md shadow-sm -space-y-px">
-                    <input id="register-username" name="username" type="text" required class="w-full px-3 py-2 text-white bg-gray-700 border-gray-600 rounded-t-md placeholder-gray-400 focus:outline-none focus:ring-indigo-500" placeholder="Username">
-                    <input id="register-password" name="password" type="password" required class="w-full px-3 py-2 text-white bg-gray-700 border-gray-600 placeholder-gray-400 focus:outline-none focus:ring-indigo-500" placeholder="Password">
-                    <input id="register-api-key" name="api_key" type="text" class="w-full px-3 py-2 text-white bg-gray-700 border-gray-600 rounded-b-md placeholder-gray-400 focus:outline-none focus:ring-indigo-500" placeholder="Game API Key (optional for devs)">
-                </div>
-                <div><button type="submit" class="w-full px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700">Create Account</button></div>
-                 <p id="register-error" class="text-sm text-center text-red-400 h-4" aria-live="assertive"></p>
-            </form>
-            <p class="text-sm text-center text-gray-400">Already have an account? <button id="show-login-view-button" class="font-medium text-indigo-400 hover:text-indigo-300">Sign In</button></p>
         </div>
     </div>
 
@@ -152,13 +146,30 @@
         function fitMapToView() { if (Object.keys(systems).length === 0) return; let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity; Object.values(systems).forEach(s => { minX=Math.min(minX,s.x); maxX=Math.max(maxX,s.x); minY=Math.min(minY,s.y); maxY=Math.max(maxY,s.y); }); const mapW=maxX-minX, mapH=maxY-minY, mapCX=minX+mapW/2, mapCY=minY+mapH/2; const scale=Math.min(dom.canvas.width/(mapW*1.2), dom.canvas.height/(mapH*1.2))||1; viewTransform = { scale, translateX: (dom.canvas.width/2)-(mapCX*scale), translateY: (dom.canvas.height/2)-(mapCY*scale) }; localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform));}
         const getSpiralPoint = (pos) => { const a=SPIRAL_TIGHTNESS, r=pos*SPIRAL_SCALE/1000; return { x: r*Math.cos(pos*a), y: r*Math.sin(pos*a) }; };
         
-        function drawMap() { if(!dom.canvas.width) return; const ctx = dom.ctx; ctx.clearRect(0,0,dom.canvas.width,dom.canvas.height); ctx.save(); ctx.translate(viewTransform.translateX, viewTransform.translateY); ctx.scale(viewTransform.scale, viewTransform.scale); if(Object.keys(systems).length > 0){ let maxPos=Math.max(...Object.values(systems).map(s=>s.position)); if(maxPos>0){ ctx.strokeStyle='rgba(75,85,99,0.2)';ctx.lineWidth=1/viewTransform.scale;ctx.beginPath();const s=1;ctx.moveTo(0,0);for(let p=s;p<=maxPos*1.1;p+=s)ctx.lineTo(getSpiralPoint(p).x,getSpiralPoint(p).y);ctx.stroke();}} Object.values(systems).forEach(sys => { if (sys.catapult_radius > 0) { const isToggled = toggledCatapultIds.has(String(sys.id)); if (showAllCatapults ^ isToggled) { ctx.strokeStyle = 'rgba(132, 204, 22, 0.3)'; ctx.lineWidth = 10 / viewTransform.scale; const startPos=sys.position-sys.catapult_radius, endPos=sys.position+sys.catapult_radius; const step=Math.max(1,Math.abs(endPos-startPos)/100); ctx.beginPath(); ctx.moveTo(getSpiralPoint(startPos).x, getSpiralPoint(startPos).y); for (let pos=startPos+step;pos<endPos;pos+=step){ ctx.lineTo(getSpiralPoint(pos).x,getSpiralPoint(pos).y); } ctx.lineTo(getSpiralPoint(endPos).x, getSpiralPoint(endPos).y); ctx.stroke(); } } }); ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)'; ctx.lineWidth = 1 / viewTransform.scale; ctx.setLineDash([5 / viewTransform.scale, 5 / viewTransform.scale]); wormholes.forEach(wh => { const sA=systems[wh[0]], sB=systems[wh[1]]; if (sA && sB) { ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } }); ctx.setLineDash([]); const wormholeSet = new Set(wormholes.map(wh => `${Math.min(wh[0],wh[1])}-${Math.max(wh[0],wh[1])}`)); if (calculatedPath.length > 1) { for (let i = 0; i < calculatedPath.length - 1; i++) { const sA = systems[calculatedPath[i]], sB = systems[calculatedPath[i + 1]]; if (!sA || !sB) continue; const isWormhole = wormholeSet.has(`${Math.min(sA.id,sB.id)}-${Math.max(sA.id,sB.id)}`); const isCatapult = sA.catapult_radius > 0 && Math.abs(sA.position - sB.position) <= sA.catapult_radius; if (isWormhole) { ctx.strokeStyle='#ef4444'; ctx.lineWidth=3/viewTransform.scale; ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } else if (isCatapult) { ctx.strokeStyle='#a3e635'; ctx.lineWidth=3/viewTransform.scale; ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } else { ctx.strokeStyle='#f59e0b'; ctx.lineWidth=3/viewTransform.scale; const s=1; ctx.beginPath(); ctx.moveTo(getSpiralPoint(sA.position).x,getSpiralPoint(sA.position).y); for (let j=1;j<=Math.floor(Math.abs(sB.position-sA.position)/s);j++)ctx.lineTo(getSpiralPoint(sA.position+(j*s*Math.sign(sB.position-sA.position))).x,getSpiralPoint(sA.position+(j*s*Math.sign(sB.position-sA.position))).y); ctx.lineTo(getSpiralPoint(sB.position).x,getSpiralPoint(sB.position).y);ctx.stroke(); } } } const pathSet = new Set(calculatedPath); Object.values(systems).forEach(sys => { const iP=pathSet.has(String(sys.id)); const isHovered = hoveredSystem && hoveredSystem.id === sys.id; ctx.fillStyle = iP ? '#f59e0b' : '#38bdf8'; ctx.beginPath(); ctx.arc(sys.x, sys.y, (iP || isHovered ? 6 : 4) / viewTransform.scale, 0, Math.PI * 2); ctx.fill(); const isDefaultName = sys.name.startsWith("System "); let shouldShowLabel = (isOnPath || isHovered || viewTransform.scale > 0.8); if (isDefaultName && !showUnclaimedNames) { shouldShowLabel = false; } if (shouldShowLabel) { ctx.fillStyle = (isOnPath || isHovered) ? '#ffffff' : '#e5e7eb'; ctx.font = `${(isOnPath || isHovered ? 12 : 10) / viewTransform.scale}px Inter`; ctx.textAlign = 'center'; ctx.fillText(sys.name, sys.x, sys.y - ((iP || isHovered ? 10 : 8) / viewTransform.scale)); } }); ctx.restore(); }
+        function drawMap() {
+            if(!dom.canvas.width || !dom.ctx) return; const ctx = dom.ctx;
+            ctx.setTransform(1, 0, 0, 1, 0, 0); // CORRECTED: Reset transform before clearing
+            ctx.clearRect(0,0,dom.canvas.width,dom.canvas.height);
+            ctx.save();
+            ctx.translate(viewTransform.translateX, viewTransform.translateY);
+            ctx.scale(viewTransform.scale, viewTransform.scale);
+            if(Object.keys(systems).length > 0){ let maxPos=Math.max(...Object.values(systems).map(s=>s.position)); if(maxPos>0){ ctx.strokeStyle='rgba(75,85,99,0.2)';ctx.lineWidth=1/viewTransform.scale;ctx.beginPath();const s=1;ctx.moveTo(0,0);for(let p=s;p<=maxPos*1.1;p+=s)ctx.lineTo(getSpiralPoint(p).x,getSpiralPoint(p).y);ctx.stroke();}}
+            Object.values(systems).forEach(sys => { if (sys.catapult_radius > 0) { const isToggled = toggledCatapultIds.has(String(sys.id)); if (showAllCatapults ^ isToggled) { ctx.strokeStyle = 'rgba(132, 204, 22, 0.3)'; ctx.lineWidth = 10 / viewTransform.scale; const startPos=sys.position-sys.catapult_radius, endPos=sys.position+sys.catapult_radius; const step=Math.max(1,Math.abs(endPos-startPos)/100); ctx.beginPath(); ctx.moveTo(getSpiralPoint(startPos).x, getSpiralPoint(startPos).y); for (let pos=startPos+step;pos<endPos;pos+=step){ ctx.lineTo(getSpiralPoint(pos).x,getSpiralPoint(pos).y); } ctx.lineTo(getSpiralPoint(endPos).x, getSpiralPoint(endPos).y); ctx.stroke(); } } });
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)'; ctx.lineWidth = 1 / viewTransform.scale; ctx.setLineDash([5 / viewTransform.scale, 5 / viewTransform.scale]);
+            wormholes.forEach(wh => { const sA=systems[wh[0]], sB=systems[wh[1]]; if (sA && sB) { ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } });
+            ctx.setLineDash([]);
+            const wormholeSet = new Set(wormholes.map(wh => `${Math.min(wh[0],wh[1])}-${Math.max(wh[0],wh[1])}`));
+            if (calculatedPath.length > 1) { for (let i = 0; i < calculatedPath.length - 1; i++) { const sA = systems[calculatedPath[i]], sB = systems[calculatedPath[i + 1]]; if (!sA || !sB) continue; const isWormhole = wormholeSet.has(`${Math.min(sA.id,sB.id)}-${Math.max(sA.id,sB.id)}`); const isCatapult = sA.catapult_radius > 0 && Math.abs(sA.position - sB.position) <= sA.catapult_radius; if (isWormhole) { ctx.strokeStyle='#ef4444'; ctx.lineWidth=3/viewTransform.scale; ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } else if (isCatapult) { ctx.strokeStyle='#a3e635'; ctx.lineWidth=3/viewTransform.scale; ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } else { ctx.strokeStyle='#f59e0b'; ctx.lineWidth=3/viewTransform.scale; const s=1; ctx.beginPath(); ctx.moveTo(getSpiralPoint(sA.position).x,getSpiralPoint(sA.position).y); for (let j=1;j<=Math.floor(Math.abs(sB.position-sA.position)/s);j++)ctx.lineTo(getSpiralPoint(sA.position+(j*s*Math.sign(sB.position-sA.position))).x,getSpiralPoint(sA.position+(j*s*Math.sign(sB.position-sA.position))).y); ctx.lineTo(getSpiralPoint(sB.position).x,getSpiralPoint(sB.position).y);ctx.stroke(); } } }
+            const pathSet = new Set(calculatedPath);
+            Object.values(systems).forEach(sys => { const iP=pathSet.has(String(sys.id)); const isHovered = hoveredSystem && hoveredSystem.id === sys.id; ctx.fillStyle = iP ? '#f59e0b' : '#38bdf8'; ctx.beginPath(); ctx.arc(sys.x, sys.y, (iP || isHovered ? 6 : 4) / viewTransform.scale, 0, Math.PI * 2); ctx.fill(); const isDefaultName = sys.name.startsWith("System "); let shouldShowLabel = (isOnPath || isHovered || viewTransform.scale > 0.8); if (isDefaultName && !showUnclaimedNames) { shouldShowLabel = false; } if (shouldShowLabel) { ctx.fillStyle = (isOnPath || isHovered) ? '#ffffff' : '#e5e7eb'; ctx.font = `${(isOnPath || isHovered ? 12 : 10) / viewTransform.scale}px Inter`; ctx.textAlign = 'center'; ctx.fillText(sys.name, sys.x, sys.y - ((iP || isHovered ? 10 : 8) / viewTransform.scale)); } });
+            ctx.restore();
+        }
         
         function handleToggleAllCatapults(e) { showAllCatapults = e.target.checked; toggledCatapultIds.clear(); drawMap(); }
         function handleToggleUnclaimedNames(e) { showUnclaimedNames = e.target.checked; drawMap(); }
         function handleResetView() { fitMapToView(); drawMap(); }
         function onMouseDown(e) { isMouseDown = true; isDragging = false; dragStartPos = { x: e.clientX, y: e.clientY }; lastDragPosition = { x: e.clientX, y: e.clientY }; }
-        function onMouseMove(e) { const rect = dom.canvas.getBoundingClientRect(), mouseX = e.clientX - rect.left, mouseY = e.clientY - rect.top, worldX = (mouseX-viewTransform.translateX)/viewTransform.scale, worldY = (mouseY-viewTransform.translateY)/viewTransform.scale; let hoveringOnSystem = null; for(const system of Object.values(systems)){ const dx=worldX-system.x,dy=worldY-system.y;if(Math.sqrt(dx*dx+dy*dy)<(10/viewTransform.scale)){hoveringOnSystem=system;break;}} if (hoveredSystem !== hoveringOnSystem) { hoveredSystem = currentlyHovering; drawMap(); } let cursorStyle = hoveringOnSystem ? 'pointer' : 'grab'; if(isMouseDown){if(!isDragging&&(Math.abs(e.clientX-dragStartPos.x)>5||Math.abs(e.clientY-dragStartPos.y)>5)){isDragging=true;}if(isDragging){cursorStyle='grabbing';const dx=e.clientX-lastDragPosition.x,dy=e.clientY-lastDragPosition.y;viewTransform.translateX+=dx;viewTransform.translateY+=dy;lastDragPosition={x:e.clientX,y:e.clientY};drawMap();}} dom.canvas.style.cursor = cursorStyle;}
+        function onMouseMove(e) { const rect = dom.canvas.getBoundingClientRect(), mouseX = e.clientX - rect.left, mouseY = e.clientY - rect.top, worldX = (mouseX-viewTransform.translateX)/viewTransform.scale, worldY = (mouseY-viewTransform.translateY)/viewTransform.scale; let currentlyHovering = null; for(const system of Object.values(systems)){ const dx=worldX-system.x,dy=worldY-system.y;if(Math.sqrt(dx*dx+dy*dy)<(10/viewTransform.scale)){currentlyHovering=system;break;}} if (hoveredSystem !== currentlyHovering) { hoveredSystem = currentlyHovering; drawMap(); } let cursorStyle = hoveredSystem ? 'pointer' : 'grab'; if(isMouseDown){if(!isDragging&&(Math.abs(e.clientX-dragStartPos.x)>5||Math.abs(e.clientY-dragStartPos.y)>5)){isDragging=true;}if(isDragging){cursorStyle='grabbing';const dx=e.clientX-lastDragPosition.x,dy=e.clientY-lastDragPosition.y;viewTransform.translateX+=dx;viewTransform.translateY+=dy;lastDragPosition={x:e.clientX,y:e.clientY};drawMap();}}else{ dom.canvas.style.cursor = cursorStyle;}}
         function onMouseUp(e) { if (!isDragging) { if (hoveredSystem) { if (e.shiftKey && hoveredSystem.catapult_radius > 0) { const systemId=String(hoveredSystem.id); if(toggledCatapultIds.has(systemId)){toggledCatapultIds.delete(systemId);}else{toggledCatapultIds.add(systemId);} } else if (activeRouteInput) { activeRouteInput.value = hoveredSystem.name; if (activeRouteInput === dom.startSystemInput) { dom.endSystemInput.focus(); } else { dom.routeForm.querySelector('button[type="submit"]').focus(); } } drawMap(); } } isMouseDown = false; isDragging = false; dom.canvas.style.cursor = hoveredSystem ? 'pointer' : 'grab'; }
         
         function setupEventListeners() {
