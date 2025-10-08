@@ -324,6 +324,7 @@ def calculate_path():
     while current_id: full_path_ids.append(current_id); current_id, _ = predecessors.get(current_id, (None, None))
     full_path_ids.reverse()
     if not full_path_ids or full_path_ids[0] != start_id: return jsonify({'path': [], 'distance': None})
+    if len(full_path_ids) <= 1: return jsonify({'path': full_path_ids, 'simple_path': [], 'distance': total_distance})
     simple_path = []; current_leg_start_id = full_path_ids[0]; _, current_method = predecessors[full_path_ids[1]]
     for i in range(1, len(full_path_ids)):
         _, step_method = predecessors[full_path_ids[i]]
@@ -333,6 +334,7 @@ def calculate_path():
     simple_path.append({'from_id': current_leg_start_id, 'to_id': full_path_ids[-1], 'method': current_method})
     return jsonify({'path': full_path_ids, 'simple_path': simple_path, 'distance': total_distance})
 
+# This call ensures the database is set up when the app starts.
 setup_database_if_needed()
 
 if __name__ == '__main__':
