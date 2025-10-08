@@ -17,21 +17,39 @@
             <a href="/" class="text-indigo-400 hover:text-indigo-300">&larr; Back to Main Map</a>
         </header>
 
+        <!-- UPDATED: New Admin Tools Section -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+            <div class="bg-gray-900 rounded-lg shadow p-6">
+                <h2 class="text-2xl font-bold text-white mb-4">Database Migration</h2>
+                <p class="text-sm text-gray-400 mb-4">Run this once to add the 'is_developer' role to the database. It is safe to run multiple times.</p>
+                <button id="run-migration-btn" class="w-full bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 px-4 rounded-md">Run `is_developer` Migration</button>
+                <p id="migration-status" class="text-sm text-center text-green-400 mt-4 h-4"></p>
+            </div>
+            <div class="bg-gray-900 rounded-lg shadow p-6">
+                <h2 class="text-2xl font-bold text-white mb-4">Promote Developer</h2>
+                <form id="promote-dev-form" class="space-y-3">
+                     <input type="text" id="dev-username-input" placeholder="Username to promote" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white">
+                    <button type="submit" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-md">Promote to Developer</button>
+                </form>
+                <p id="dev-status" class="text-sm text-center text-green-400 mt-4 h-4"></p>
+            </div>
+        </div>
+
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <!-- Catapult Management -->
             <div class="bg-gray-900 rounded-lg shadow p-6">
                 <h2 class="text-2xl font-bold text-white mb-4">Manage Catapults</h2>
                 <div class="mb-4">
-                    <input type="text" id="search-input" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="Search by System Name or ID...">
+                    <input type="text" id="search-input" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white" placeholder="Search by System Name or ID...">
                 </div>
                 <div class="overflow-y-auto h-96">
                     <table class="min-w-full divide-y divide-gray-700">
                         <thead class="bg-gray-800 sticky top-0">
                             <tr>
-                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">System ID</th>
-                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">System Name</th>
-                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Catapult Radius</th>
-                                <th scope="col" class="relative px-6 py-3"><span class="sr-only">Save</span></th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">System ID</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">System Name</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">Catapult Radius</th>
+                                <th class="relative px-6 py-3"><span class="sr-only">Save</span></th>
                             </tr>
                         </thead>
                         <tbody id="systems-table-body" class="bg-gray-800 divide-y divide-gray-700"></tbody>
@@ -43,8 +61,6 @@
             <!-- Wormhole Management -->
             <div class="bg-gray-900 rounded-lg shadow p-6">
                 <h2 class="text-2xl font-bold text-white mb-4">Manage Wormholes</h2>
-                
-                <!-- Add Wormhole Form -->
                 <form id="add-wormhole-form" class="mb-6 bg-gray-800 p-4 rounded-lg space-y-3">
                     <h3 class="font-semibold text-white">Add New Wormhole</h3>
                     <div class="flex items-center space-x-2">
@@ -59,9 +75,9 @@
                     <table class="min-w-full divide-y divide-gray-700">
                         <thead class="bg-gray-800 sticky top-0">
                             <tr>
-                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">System A</th>
-                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">System B</th>
-                                <th scope="col" class="relative px-6 py-3"><span class="sr-only">Delete</span></th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">System A</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">System B</th>
+                                <th class="relative px-6 py-3"><span class="sr-only">Delete</span></th>
                             </tr>
                         </thead>
                         <tbody id="wormholes-table-body" class="bg-gray-800 divide-y divide-gray-700"></tbody>
@@ -74,34 +90,39 @@
 
     <script>
     document.addEventListener('DOMContentLoaded', () => {
-        const systemsTableBody = document.getElementById('systems-table-body');
-        const searchInput = document.getElementById('search-input');
-        const systemStatus = document.getElementById('system-status');
-        const wormholesTableBody = document.getElementById('wormholes-table-body');
-        const addWormholeForm = document.getElementById('add-wormhole-form');
-        const wormholeStatus = document.getElementById('wormhole-status');
+        const dom = {
+            systemsTableBody: document.getElementById('systems-table-body'),
+            searchInput: document.getElementById('search-input'),
+            systemStatus: document.getElementById('system-status'),
+            wormholesTableBody: document.getElementById('wormholes-table-body'),
+            addWormholeForm: document.getElementById('add-wormhole-form'),
+            wormholeStatus: document.getElementById('wormhole-status'),
+            runMigrationBtn: document.getElementById('run-migration-btn'),
+            migrationStatus: document.getElementById('migration-status'),
+            promoteDevForm: document.getElementById('promote-dev-form'),
+            devStatus: document.getElementById('dev-status')
+        };
         let allSystems = [];
 
         const apiFetch = (url, options = {}) => { options.credentials = 'include'; return fetch(url, options); };
 
         const renderSystemsTable = (systems) => {
-            systemsTableBody.innerHTML = '';
+            dom.systemsTableBody.innerHTML = '';
             systems.forEach(system => {
                 const row = document.createElement('tr');
                 row.id = `system-row-${system.id}`;
                 row.innerHTML = `<td class="px-6 py-4 text-sm text-gray-300">${system.id}</td><td class="px-6 py-4 text-sm font-medium text-white">${system.name}</td><td class="px-6 py-4"><input type="number" value="${system.catapult_radius}" class="w-24 bg-gray-700 rounded-md py-1 px-2 text-white"></td><td class="px-6 py-4 text-right"><button class="text-indigo-400 hover:text-indigo-300 save-btn">Save</button></td>`;
-                systemsTableBody.appendChild(row);
+                dom.systemsTableBody.appendChild(row);
             });
         };
         
         const renderWormholesTable = (wormholes) => {
-            wormholesTableBody.innerHTML = '';
+            dom.wormholesTableBody.innerHTML = '';
             wormholes.forEach(wh => {
                 const row = document.createElement('tr');
-                row.dataset.idA = wh.system_a_id;
-                row.dataset.idB = wh.system_b_id;
+                row.dataset.idA = wh.system_a_id; row.dataset.idB = wh.system_b_id;
                 row.innerHTML = `<td class="px-6 py-4 text-sm text-gray-300">${wh.name_a} (${wh.system_a_id})</td><td class="px-6 py-4 text-sm text-gray-300">${wh.name_b} (${wh.system_b_id})</td><td class="px-6 py-4 text-right"><button class="text-red-400 hover:text-red-300 delete-btn">&times;</button></td>`;
-                wormholesTableBody.appendChild(row);
+                dom.wormholesTableBody.appendChild(row);
             });
         };
 
@@ -110,21 +131,21 @@
             const row = e.target.closest('tr');
             const systemId = row.id.split('-')[2];
             const newRadius = parseFloat(row.querySelector('input').value);
-            systemStatus.textContent = `Saving...`;
+            dom.systemStatus.textContent = `Saving...`;
             const r = await apiFetch('/api/admin/update_system', {method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ system_id: systemId, catapult_radius: newRadius })});
-            const d = await r.json(); systemStatus.textContent = d.message; setTimeout(() => { systemStatus.textContent = '' }, 3000);
+            const d = await r.json(); dom.systemStatus.textContent = d.message; setTimeout(() => { dom.systemStatus.textContent = '' }, 3000);
         };
 
         const handleAddWormhole = async (e) => {
             e.preventDefault();
             const idA = parseInt(document.getElementById('wormhole-id-a').value, 10);
             const idB = parseInt(document.getElementById('wormhole-id-b').value, 10);
-            if (!idA || !idB || idA === idB) { wormholeStatus.textContent = 'Invalid system IDs.'; return; }
-            wormholeStatus.textContent = 'Adding...';
+            if (!idA || !idB || idA === idB) { dom.wormholeStatus.textContent = 'Invalid system IDs.'; return; }
+            dom.wormholeStatus.textContent = 'Adding...';
             const r = await apiFetch('/api/admin/add_wormhole', {method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ system_a_id: idA, system_b_id: idB })});
-            const d = await r.json(); wormholeStatus.textContent = d.message || d.error;
-            if(r.ok) { loadWormholes(); addWormholeForm.reset(); }
-            setTimeout(() => { wormholeStatus.textContent = '' }, 3000);
+            const d = await r.json(); dom.wormholeStatus.textContent = d.message || d.error;
+            if(r.ok) { loadAdminData(); dom.addWormholeForm.reset(); }
+            setTimeout(() => { dom.wormholeStatus.textContent = '' }, 3000);
         };
 
         const handleDeleteWormhole = async (e) => {
@@ -132,17 +153,37 @@
             if (!confirm('Are you sure you want to delete this wormhole?')) return;
             const row = e.target.closest('tr');
             const { idA, idB } = row.dataset;
-            wormholeStatus.textContent = 'Deleting...';
+            dom.wormholeStatus.textContent = 'Deleting...';
             const r = await apiFetch('/api/admin/delete_wormhole', {method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ system_a_id: idA, system_b_id: idB })});
-            const d = await r.json(); wormholeStatus.textContent = d.message;
+            const d = await r.json(); dom.wormholeStatus.textContent = d.message;
             if (r.ok) row.remove();
-            setTimeout(() => { wormholeStatus.textContent = '' }, 3000);
+            setTimeout(() => { dom.wormholeStatus.textContent = '' }, 3000);
         };
 
         const handleSearch = (e) => {
             const query = e.target.value.toLowerCase();
             const filteredSystems = allSystems.filter(s => String(s.id).includes(query) || s.name.toLowerCase().includes(query));
             renderSystemsTable(filteredSystems);
+        };
+        
+        const handleRunMigration = async () => {
+            if (!confirm('Are you sure you want to run the database migration? This should only be done once.')) return;
+            dom.migrationStatus.textContent = 'Running migration...';
+            const r = await apiFetch('/api/admin/run_migration', {method: 'POST'});
+            const d = await r.json();
+            dom.migrationStatus.textContent = d.message || d.error;
+            setTimeout(() => { dom.migrationStatus.textContent = '' }, 5000);
+        };
+
+        const handlePromoteDeveloper = async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('dev-username-input').value.trim();
+            if (!username) { dom.devStatus.textContent = 'Please enter a username.'; return; }
+            dom.devStatus.textContent = 'Promoting...';
+            const r = await apiFetch('/api/admin/promote_developer', {method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: username })});
+            const d = await r.json(); dom.devStatus.textContent = d.message || d.error;
+            if(r.ok) dom.promoteDevForm.reset();
+            setTimeout(() => { dom.devStatus.textContent = '' }, 3000);
         };
 
         const loadAdminData = async () => {
@@ -156,15 +197,16 @@
                 const allWormholes = await wormholesRes.json();
                 renderSystemsTable(allSystems);
                 renderWormholesTable(allWormholes);
-            } catch (error) {
-                console.error("Failed to load admin data:", error);
-            }
+            } catch (error) { console.error("Failed to load admin data:", error); }
         };
         
-        systemsTableBody.addEventListener('click', handleSaveSystem);
-        wormholesTableBody.addEventListener('click', handleDeleteWormhole);
-        addWormholeForm.addEventListener('submit', handleAddWormhole);
-        searchInput.addEventListener('input', handleSearch);
+        dom.systemsTableBody.addEventListener('click', handleSaveSystem);
+        dom.wormholesTableBody.addEventListener('click', handleDeleteWormhole);
+        dom.addWormholeForm.addEventListener('submit', handleAddWormhole);
+        dom.searchInput.addEventListener('input', handleSearch);
+        dom.runMigrationBtn.addEventListener('click', handleRunMigration);
+        dom.promoteDevForm.addEventListener('submit', handlePromoteDeveloper);
+        
         loadAdminData();
     });
     </script>

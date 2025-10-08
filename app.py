@@ -36,9 +36,16 @@ def get_db_connection():
         return conn, conn.cursor()
 
 def setup_database_if_needed():
-    print("Checking database schema...")
     conn, cursor = get_db_connection()
     pg_compat = bool(DATABASE_URL)
+    try:
+        cursor.execute("SELECT id FROM users LIMIT 1")
+        print("Database tables already exist.")
+        conn.close()
+        return
+    except (sqlite3.OperationalError, psycopg2.errors.UndefinedTable):
+        print("Database tables not found. Creating schema...")
+        conn.rollback()
     
     user_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
     faction_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
@@ -58,7 +65,7 @@ def setup_database_if_needed():
     
     conn.commit()
     conn.close()
-    print("Database schema check complete.")
+    print("Database schema created.")
 
 # --- Admin Decorator & Utilities ---
 def admin_required(f):
@@ -220,7 +227,6 @@ def profile():
 def get_all_systems():
     conn, cursor = get_db_connection(); cursor.execute('SELECT id, name, position, catapult_radius FROM systems ORDER BY position ASC'); systems_list = cursor.fetchall(); conn.close()
     return jsonify(systems_list)
-
 @app.route('/api/admin/update_system', methods=['POST'])
 @admin_required
 def update_system():
@@ -228,13 +234,11 @@ def update_system():
     if system_id is None or new_radius is None: return jsonify({'error': 'system_id and catapult_radius are required'}), 400
     conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'; cursor.execute(f"UPDATE systems SET catapult_radius = {param} WHERE id = {param}", (new_radius, system_id)); conn.commit(); conn.close()
     return jsonify({'message': f'System {system_id} updated successfully.'})
-
 @app.route('/api/admin/wormholes')
 @admin_required
 def get_all_wormholes():
     conn, cursor = get_db_connection(); cursor.execute('SELECT s1.name as name_a, s2.name as name_b, w.system_a_id, w.system_b_id FROM wormholes w JOIN systems s1 ON w.system_a_id = s1.id JOIN systems s2 ON w.system_b_id = s2.id'); wormholes_list = cursor.fetchall(); conn.close()
     return jsonify(wormholes_list)
-
 @app.route('/api/admin/add_wormhole', methods=['POST'])
 @admin_required
 def add_wormhole():
@@ -246,7 +250,6 @@ def add_wormhole():
     except (sqlite3.IntegrityError, psycopg2.IntegrityError): return jsonify({'error': 'Wormhole already exists or invalid system ID'}), 400
     finally: conn.close()
     return jsonify({'message': 'Wormhole added successfully'})
-
 @app.route('/api/admin/delete_wormhole', methods=['POST'])
 @admin_required
 def delete_wormhole():
@@ -255,12 +258,14 @@ def delete_wormhole():
     conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'; cursor.execute(f"DELETE FROM wormholes WHERE system_a_id = {param} AND system_b_id = {param}", (min(id_a, id_b), max(id_a, id_b))); conn.commit(); conn.close()
     return jsonify({'message': 'Wormhole deleted successfully'})
 
+# --- UPDATED DATA & PATHFINDING API ---
 @app.route('/api/systems')
 def get_systems_data():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
     conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
     
-    if session.get('is_developer'):
+    # Developers and Admins can see all systems
+    if session.get('is_developer') or session.get('is_admin'):
         cursor.execute('SELECT s.id, s.name, s.x, s.y, s.position, s.catapult_radius FROM systems s')
     else:
         faction_id = session['faction_id']
@@ -280,7 +285,8 @@ def calculate_path():
     if not start_id or not end_id: return jsonify({'error': 'start_id and end_id are required'}), 400
     conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
 
-    if session.get('is_developer'):
+    # Developers and Admins use all systems for pathfinding
+    if session.get('is_developer') or session.get('is_admin'):
         cursor.execute('SELECT id, position, catapult_radius FROM systems')
     else:
         faction_id = session['faction_id']
@@ -291,6 +297,7 @@ def calculate_path():
     if not all_systems: return jsonify({'path': [], 'distance': None})
     systems_map = {str(r['id']): {'position': r['position'], 'radius': r['catapult_radius']} for r in all_systems}
     
+    # ... (The rest of the pathfinding logic is unchanged)
     wormhole_pairs = {tuple(sorted((str(wh['system_a_id']), str(wh['system_b_id'])))) for wh in all_wormholes}
     distances = {sys_id: float('inf') for sys_id in systems_map}; predecessors = {sys_id: (None, None) for sys_id in systems_map}
     if start_id not in systems_map: return jsonify({'error': 'Start system not in your faction map'}), 404
