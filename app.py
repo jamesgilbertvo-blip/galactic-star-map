@@ -235,6 +235,8 @@ def serve_index(): return send_from_directory(STATIC_DIR, 'index.html')
 @app.route('/admin')
 @admin_required
 def serve_admin_panel(): return send_from_directory(STATIC_DIR, 'admin.html')
+@app.route('/guide.html')
+def serve_guide(): return send_from_directory(STATIC_DIR, 'guide.html')
 @app.route('/logout', methods=['POST'])
 def logout(): session.clear(); return jsonify({'message': 'Logout successful'})
 @app.route('/status')
