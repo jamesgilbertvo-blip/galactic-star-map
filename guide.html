@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Galactic Star Map - User Guide</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #111827; color: #d1d5db; font-family: 'Inter', sans-serif; }
+        .prose-invert h1, .prose-invert h2, .prose-invert h3 { color: #ffffff; }
+        .prose-invert a { color: #818cf8; }
+        .prose-invert a:hover { color: #a78bfa; }
+        .prose-invert strong { color: #f3f4f6; }
+        .prose-invert ul > li::before { background-color: #6b7280; }
+    </style>
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+</head>
+<body class="antialiased">
+
+    <div class="container mx-auto max-w-4xl px-4 py-12">
+        <article class="prose prose-invert max-w-none">
+            <header class="mb-8 border-b border-gray-700 pb-4">
+                <div class="flex justify-between items-center">
+                    <h1 class="text-4xl font-extrabold">Welcome to the Galactic Star Map! 🚀</h1>
+                    <a href="/" class="text-indigo-400 hover:text-indigo-300 no-underline hover:underline">&larr; Back to Map</a>
+                </div>
+                <p class="text-xl text-gray-400">This guide provides everything you need to know about using this collaborative tool to help your faction chart the vast universe of TextSpaced.</p>
+            </header>
+
+            <section>
+                <h2>Getting Started</h2>
+                
+                <h3>Registration</h3>
+                <p>To create an account, you'll need a <strong>username</strong>, a <strong>password</strong>, and a <strong>Game API Key</strong> from your TextSpaced profile.</p>
+                <ul>
+                    <li><strong>API Key</strong>: This key is essential. It allows the map application to securely read your in-game location data and update your faction's shared map.</li>
+                </ul>
+
+                <h3>Logging In</h3>
+                <p>Once registered, simply use your username and password to sign in and access your faction's map.</p>
+            </section>
+
+            <section>
+                <h2>The Main Map View</h2>
+                <p>The main view is composed of the interactive map canvas and the control panel on the left.</p>
+
+                <h3>The Map Canvas</h3>
+                <ul>
+                    <li><strong>Pan (Move)</strong>: Click and drag anywhere on the map to move your view.</li>
+                    <li><strong>Zoom</strong>: Use your mouse scroll wheel to zoom in and out, revealing more or less detail.</li>
+                    <li><strong>Reset View</strong>: If you get lost, the <strong>Reset View</strong> button in the control panel will center the map and reset the zoom level.</li>
+                </ul>
+
+                <h3>The Control Panel</h3>
+                <h4>Sync Map Data</h4>
+                <p>This is the most important feature of the application. Clicking the <strong>Sync Map Data</strong> button connects to the game via your API key and performs several actions:</p>
+                <ol>
+                    <li>It reads your current location and nearby systems.</li>
+                    <li>It discovers stable wormholes and structures (like Null Space Catapults) in your vicinity.</li>
+                    <li>It adds all this new information to your faction's shared map for everyone in your faction to see.</li>
+                </ol>
+                <p><strong>Sync often to keep your map accurate!</strong></p>
+
+                <h4>Route Planner</h4>
+                <p>The route planner calculates the most efficient path between any two systems your faction has discovered.</p>
+                <ol>
+                    <li><strong>Enter Systems</strong>: Type the start and end system names in the input boxes. The fields will autocomplete with known system names.</li>
+                    <li><strong>Click to Select</strong>: Alternatively, click on a system on the map to automatically populate the currently active input box.</li>
+                    <li><strong>Understanding the Path</strong>: The results will show a step-by-step guide and highlight the path on the map. Travel methods are color-coded:
+                        <ul>
+                            <li><span class="font-semibold text-amber-400">Orange</span>: Sublight travel along the galaxy's spiral arm.</li>
+                            <li><span class="font-semibold text-red-400">Red</span>: Instantaneous wormhole jump.</li>
+                            <li><span class="font-semibold text-lime-400">Lime Green</span>: Instantaneous catapult jump.</li>
+                        </ul>
+                    </li>
+                </ol>
+
+                <h4>Display Options</h4>
+                <ul>
+                    <li><strong>Show All Catapult Ranges</strong>: Toggles the visibility of all known catapult ranges on the map.</li>
+                    <li><strong>Show Unclaimed Names</strong>: Toggles the labels for systems with default names.</li>
+                </ul>
+
+                <h4>User Controls (Profile & Logout)</h4>
+                <ul>
+                    <li><strong>Profile</strong>: Allows you to update your Game API Key or change your password.</li>
+                    <li><strong>Logout</strong>: Securely logs you out of the application.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2>Advanced Map Features</h2>
+
+                <h3>System Naming</h3>
+                <p>Systems are labeled in one of two ways:</p>
+                <ul>
+                    <li><strong>Unique Names</strong>: Systems with player-given names (e.g., "Marketplace") are displayed with that name.</li>
+                    <li><strong>Coordinate Names</strong>: Unclaimed systems discovered via syncing are labeled with their spiral coordinate, like <strong>#543.21</strong>, to match the in-game display and help with navigation.</li>
+                </ul>
+                
+                <h3>Catapult Ranges</h3>
+                <p>Catapult ranges are drawn to follow the curve of the galactic spiral, giving you an accurate sense of their reach.</p>
+                <ul>
+                    <li><strong>Global Toggle</strong>: Use the "Show All Catapult Ranges" checkbox to turn them all on or off.</li>
+                    <li><strong>Individual Toggle</strong>: <strong>Shift+Click</strong> on a system to permanently toggle the display of its specific range.</li>
+                    <li><strong>Highlighting</strong>: <strong>Click</strong> on a single system to highlight its range in a brighter color while dimming all others. This makes it easy to analyze a specific jump path. Click anywhere else on the map canvas to clear the selection.</li>
+                </ul>
+            </section>
+
+        </article>
+    </div>
+
+</body>
+</html>
