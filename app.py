@@ -10,10 +10,19 @@ import sys
 import heapq
 from functools import wraps
 from urllib.parse import urlparse
+from cryptography.fernet import Fernet # <-- New Import
 
 # --- CONFIGURATION ---
 DATABASE_URL = os.environ.get('DATABASE_URL')
 STATIC_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# --- ENCRYPTION SETUP ---
+ENCRYPTION_KEY = os.environ.get('ENCRYPTION_KEY')
+if not ENCRYPTION_KEY:
+    # This will cause the app to fail on startup if the key is not set, which is a good safety measure.
+    raise ValueError("ENCRYPTION_KEY environment variable not set!")
+fernet = Fernet(ENCRYPTION_KEY.encode())
+
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key-for-dev')
 CORS(app, supports_credentials=True)
@@ -24,6 +33,8 @@ WORMHOLE_API_URL = "https://play.textspaced.com/api/lookup/nearby/wormholes/"
 STRUCTURES_API_URL = "https://play.textspaced.com/api/system/structures/"
 CURRENT_SYSTEM_API_URL = "https://play.textspaced.com/api/system/"
 FACTION_API_URL = "https://play.textspaced.com/api/faction/info/"
+ALLIANCES_API_URL = "https://api.textspaced.com/factions/"
+
 
 # --- DATABASE CONNECTION & SETUP ---
 def get_db_connection():
@@ -74,10 +85,12 @@ def admin_required(f):
         if 'is_admin' not in session or not session['is_admin']: return jsonify({'error': 'Admin access required'}), 403
         return f(*args, **kwargs)
     return decorated_function
+
 def get_spiral_coords(position):
     if position is None: return 0, 0
     angle = position * 0.1; radius = position * 50 / 1000
     return radius * math.cos(angle), radius * math.sin(angle)
+
 def fetch_api_data(url, api_key):
     if not api_key: return None
     headers = {'Authorization': f'Bearer {api_key}', 'Accept': 'application/json'}
@@ -101,11 +114,14 @@ def sync_data():
         user_id = session['user_id']
         cursor.execute(f"SELECT api_key, faction_id FROM users WHERE id = {param}", (user_id,))
         user = cursor.fetchone()
-
-        if not user or not user['api_key']:
+        
+        encrypted_api_key = user['api_key'] if user else None
+        if not encrypted_api_key:
             return jsonify({'message': 'API key not found.'}), 400
+        
+        # DECRYPT the key before using it
+        api_key = fernet.decrypt(encrypted_api_key.encode()).decode()
 
-        api_key = user['api_key']
         faction_info = fetch_api_data(FACTION_API_URL, api_key)
         faction_name = faction_info.get('info', {}).get('name')
         if not faction_name:
@@ -209,15 +225,23 @@ def register():
             if pg_compat: cursor.execute(f"INSERT INTO factions (name) VALUES ({param}) RETURNING id", (faction_name,)); faction_id = cursor.fetchone()['id']
             else: cursor.execute("INSERT INTO factions (name) VALUES (?)", (faction_name,)); faction_id = cursor.lastrowid
         
+        # ENCRYPT the API key before saving
+        encrypted_api_key = fernet.encrypt(api_key.encode()).decode() if api_key else None
+        
         if pg_compat:
-            cursor.execute(f"INSERT INTO users (username, password, api_key, faction_id, is_admin, is_developer) VALUES ({param}, {param}, {param}, {param}, {param}, {param}) RETURNING id", (username, password, api_key or None, faction_id, is_admin_flag, is_developer_account))
+            cursor.execute(f"INSERT INTO users (username, password, api_key, faction_id, is_admin, is_developer) VALUES ({param}, {param}, {param}, {param}, {param}, {param}) RETURNING id", (username, password, encrypted_api_key, faction_id, is_admin_flag, is_developer_account))
             user_id = cursor.fetchone()['id']
         else:
-            cursor.execute("INSERT INTO users (username, password, api_key, faction_id, is_admin, is_developer) VALUES (?, ?, ?, ?, ?, ?)", (username, password, api_key or None, faction_id, is_admin_flag, is_developer_account))
+            cursor.execute("INSERT INTO users (username, password, api_key, faction_id, is_admin, is_developer) VALUES (?, ?, ?, ?, ?, ?)", (username, password, encrypted_api_key, faction_id, is_admin_flag, is_developer_account))
             user_id = cursor.lastrowid
         
         conn.commit(); session['user_id'], session['username'], session['faction_id'], session['is_admin'], session['is_developer'] = user_id, username, faction_id, is_admin_flag, is_developer_account
-        return jsonify({'message': 'Registration successful'}), 201
+        return jsonify({
+            'message': 'Registration successful',
+            'username': username,
+            'is_admin': is_admin_flag,
+            'is_developer': is_developer_account
+        }), 201
     except (sqlite3.IntegrityError, psycopg2.IntegrityError): return jsonify({'message': 'Username already exists.'}), 409
     finally: conn.close()
 
@@ -232,11 +256,14 @@ def login():
 
 @app.route('/')
 def serve_index(): return send_from_directory(STATIC_DIR, 'index.html')
+
+@app.route('/guide.html')
+def serve_guide():
+    return send_from_directory(STATIC_DIR, 'guide.html')
+
 @app.route('/admin')
 @admin_required
 def serve_admin_panel(): return send_from_directory(STATIC_DIR, 'admin.html')
-@app.route('/guide.html')
-def serve_guide(): return send_from_directory(STATIC_DIR, 'guide.html')
 @app.route('/logout', methods=['POST'])
 def logout(): session.clear(); return jsonify({'message': 'Logout successful'})
 @app.route('/status')
@@ -249,12 +276,24 @@ def profile():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
     user_id = session['user_id']; conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?';
     if request.method == 'GET':
-        cursor.execute(f"SELECT api_key FROM users WHERE id = {param}", (user_id,)); user = cursor.fetchone(); conn.close()
-        return jsonify(dict(user) if user else {})
+        # We don't return the key for security, just a confirmation if it exists
+        cursor.execute(f"SELECT api_key FROM users WHERE id = {param}", (user_id,))
+        user = cursor.fetchone()
+        conn.close()
+        return jsonify({'api_key_set': bool(user and user['api_key'])})
     elif request.method == 'POST':
         data = request.get_json(); updates, params = [], []
-        if data.get('api_key'): updates.append("api_key = %s"); params.append(data.get('api_key'))
-        if data.get('password'): updates.append("password = %s"); params.append(data.get('password'))
+        
+        # ENCRYPT the new API key if provided
+        if data.get('api_key'):
+            encrypted_api_key = fernet.encrypt(data.get('api_key').encode()).decode()
+            updates.append("api_key = %s")
+            params.append(encrypted_api_key)
+
+        if data.get('password'): 
+            updates.append("password = %s")
+            params.append(data.get('password'))
+            
         if not updates: return jsonify({'message': 'No changes provided.'}), 400
         params.append(user_id); query = f"UPDATE users SET {', '.join(updates)} WHERE id = {param}"
         cursor.execute(query, tuple(params)); conn.commit(); conn.close()
