@@ -298,7 +298,6 @@ def get_all_systems():
     conn, cursor = get_db_connection(); cursor.execute('SELECT id, name, position, catapult_radius FROM systems ORDER BY position ASC'); systems_list = cursor.fetchall(); conn.close()
     return jsonify(systems_list)
 
-# ... (other admin routes remain unchanged) ...
 @app.route('/api/admin/update_system', methods=['POST'])
 @admin_required
 def update_system():
@@ -337,7 +336,7 @@ def get_systems_data():
     
     if session.get('is_developer'):
         cursor.execute('SELECT s.id, s.name, s.x, s.y, s.position, s.catapult_radius FROM systems s')
-    else: # Admins and regular users see their faction's map
+    else:
         faction_id = session['faction_id']
         cursor.execute(f'SELECT s.id, s.name, s.x, s.y, s.position, s.catapult_radius FROM systems s JOIN faction_discovered_systems fds ON s.id = fds.system_id WHERE fds.faction_id = {param}', (faction_id,))
     
@@ -360,10 +359,10 @@ def calculate_path():
 
     # Fetch faction's systems
     if session.get('is_developer'):
-        cursor.execute('SELECT id, name, position, catapult_radius FROM systems')
+        cursor.execute('SELECT id, name, x, y, position, catapult_radius FROM systems')
     else:
         faction_id = session['faction_id']
-        cursor.execute(f'SELECT s.id, s.name, s.position, s.catapult_radius FROM systems s JOIN faction_discovered_systems fds ON s.id = fds.system_id WHERE fds.faction_id = {param}', (faction_id,))
+        cursor.execute(f'SELECT s.id, s.name, s.x, s.y, s.position, s.catapult_radius FROM systems s JOIN faction_discovered_systems fds ON s.id = fds.system_id WHERE fds.faction_id = {param}', (faction_id,))
     
     all_systems_raw = cursor.fetchall()
     cursor.execute('SELECT system_a_id, system_b_id FROM wormholes')
@@ -372,22 +371,24 @@ def calculate_path():
 
     if not all_systems_raw: return jsonify({'path': [], 'distance': None})
 
-    systems_map = {str(r['id']): {'name': r['name'], 'position': r['position'], 'radius': r['catapult_radius']} for r in all_systems_raw}
+    systems_map = {str(r['id']): {'name': r['name'], 'x': r['x'], 'y': r['y'], 'position': r['position'], 'radius': r['catapult_radius']} for r in all_systems_raw}
     
     start_id, end_id = None, None
     
-    # Process start input
     if start_input.startswith('pos:'):
         start_id = 'virtual_start'
-        systems_map[start_id] = {'name': f'Coordinate #{start_input[4:]}', 'position': float(start_input[4:]), 'radius': 0}
-    else: # It's a system ID
+        pos = float(start_input[4:])
+        x, y = get_spiral_coords(pos)
+        systems_map[start_id] = {'name': f'Coordinate #{pos}', 'x': x, 'y': y, 'position': pos, 'radius': 0}
+    else:
         start_id = start_input.split(':')[1]
 
-    # Process end input
     if end_input.startswith('pos:'):
         end_id = 'virtual_end'
-        systems_map[end_id] = {'name': f'Coordinate #{end_input[4:]}', 'position': float(end_input[4:]), 'radius': 0}
-    else: # It's a system ID
+        pos = float(end_input[4:])
+        x, y = get_spiral_coords(pos)
+        systems_map[end_id] = {'name': f'Coordinate #{pos}', 'x': x, 'y': y, 'position': pos, 'radius': 0}
+    else:
         end_id = end_input.split(':')[1]
 
     if start_id not in systems_map or end_id not in systems_map:
@@ -408,24 +409,17 @@ def calculate_path():
         for neighbor_id in systems_map:
             if neighbor_id == current_id: continue
             
-            # --- Calculate cost to neighbor ---
             cost, method = float('inf'), None
-            
-            # 1. Sublight Travel (always possible)
             sublight_dist = abs(systems_map[current_id]['position'] - systems_map[neighbor_id]['position'])
             cost, method = sublight_dist, 'sublight'
             
-            # 2. Wormhole (zero-cost override)
             id_pair = tuple(sorted((current_id, neighbor_id)))
-            if id_pair in wormhole_pairs:
-                cost, method = 0, 'wormhole'
+            if id_pair in wormhole_pairs: cost, method = 0, 'wormhole'
             
-            # 3. Catapult (zero-cost override)
             current_sys_info = systems_map[current_id]
             if current_sys_info.get('radius', 0) > 0 and abs(current_sys_info['position'] - systems_map[neighbor_id]['position']) <= current_sys_info['radius']:
                 cost, method = 0, 'catapult'
             
-            # Update path if a cheaper one is found
             if distances[current_id] + cost < distances[neighbor_id]:
                 distances[neighbor_id] = distances[current_id] + cost
                 predecessors[neighbor_id] = (current_id, method)
@@ -444,7 +438,17 @@ def calculate_path():
     if not full_path_ids or full_path_ids[0] != start_id:
         return jsonify({'path': [], 'distance': None})
 
-    path_for_json = [{'id': sys_id, 'name': systems_map[sys_id]['name']} for sys_id in full_path_ids]
+    # NEW: Send full system data for each step, including coordinates
+    path_for_json = []
+    for sys_id in full_path_ids:
+        node_data = systems_map[sys_id]
+        path_for_json.append({
+            'id': sys_id,
+            'name': node_data['name'],
+            'x': node_data['x'],
+            'y': node_data['y'],
+            'position': node_data['position']
+        })
 
     if len(full_path_ids) <= 1:
         return jsonify({'path': path_for_json, 'simple_path': [], 'distance': total_distance})

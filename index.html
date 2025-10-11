@@ -100,7 +100,7 @@
 
     <script>
     document.addEventListener('DOMContentLoaded', () => {
-        let systems = {}; let wormholes = []; let calculatedPath = []; let viewTransform = { scale: 1, translateX: 0, translateY: 0 }; 
+        let systems = {}; let wormholes = []; let calculatedPathNodes = []; let viewTransform = { scale: 1, translateX: 0, translateY: 0 }; 
         let isMouseDown = false; let isDragging = false; let dragStartPos = { x: 0, y: 0 }; let lastDragPosition = {x:0, y:0};
         const SPIRAL_TIGHTNESS = 0.1; const SPIRAL_SCALE = 50;
         let showAllCatapults = true; let toggledCatapultIds = new Set();
@@ -154,11 +154,10 @@
         
         function displayPathResults(result) {
             dom.routeDetailsContainer.innerHTML = '';
-            calculatedPath = result.path ? result.path.map(p => p.id) : [];
+            calculatedPathNodes = result.path || [];
+
             const allNodes = {};
-            if (result.path) {
-                result.path.forEach(p => allNodes[p.id] = p);
-            }
+            calculatedPathNodes.forEach(p => allNodes[p.id] = p);
 
             const startName = dom.startSystemInput.value;
             const endName = dom.endSystemInput.value;
@@ -174,7 +173,7 @@
             drawMap();
         }
 
-        function clearRouteDisplay() { calculatedPath = []; dom.routeDetailsContainer.innerHTML = ''; dom.startSystemInput.value = ''; dom.endSystemInput.value = ''; drawMap(); }
+        function clearRouteDisplay() { calculatedPathNodes = []; dom.routeDetailsContainer.innerHTML = ''; dom.startSystemInput.value = ''; dom.endSystemInput.value = ''; drawMap(); }
         function resizeCanvas() { if(dom.canvas.parentElement.clientWidth > 0){ dom.canvas.width = dom.canvas.clientWidth; dom.canvas.height = dom.canvas.clientHeight; if(dom.canvas.width > 0) drawMap(); } }
         function fitMapToView() { if (Object.keys(systems).length === 0) return; let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity; Object.values(systems).forEach(s => { minX=Math.min(minX,s.x); maxX=Math.max(maxX,s.x); minY=Math.min(minY,s.y); maxY=Math.max(maxY,s.y); }); const mapW=maxX-minX, mapH=maxY-minY, mapCX=minX+mapW/2, mapCY=minY+mapH/2; const scale=Math.min(dom.canvas.width/(mapW*1.2), dom.canvas.height/(mapH*1.2))||1; viewTransform = { scale, translateX: (dom.canvas.width/2)-(mapCX*scale), translateY: (dom.canvas.height/2)-(mapCY*scale) }; localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform));}
         const getSpiralPoint = (pos) => { const a=SPIRAL_TIGHTNESS, r=pos*SPIRAL_SCALE/1000; return { x: r*Math.cos(pos*a), y: r*Math.sin(pos*a) }; };
@@ -208,13 +207,33 @@
             wormholes.forEach(wh => { const sA=systems[wh[0]], sB=systems[wh[1]]; if (sA && sB) { ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } });
             ctx.setLineDash([]);
             
-            const wormholeSet = new Set(wormholes.map(wh => `${Math.min(wh[0],wh[1])}-${Math.max(wh[0],wh[1])}`));
-            if (calculatedPath.length > 1) { for (let i = 0; i < calculatedPath.length - 1; i++) { const sA = systems[calculatedPath[i]], sB = systems[calculatedPath[i + 1]]; if (!sA || !sB) continue; const isWormhole = wormholeSet.has(`${Math.min(sA.id,sB.id)}-${Math.max(sA.id,sB.id)}`); const isCatapult = sA.catapult_radius > 0 && Math.abs(sA.position - sB.position) <= sA.catapult_radius; if (isWormhole) { ctx.strokeStyle='#ef4444'; ctx.lineWidth=3/viewTransform.scale; ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } else if (isCatapult) { ctx.strokeStyle='#a3e635'; ctx.lineWidth=3/viewTransform.scale; ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } else { ctx.strokeStyle='#f59e0b'; ctx.lineWidth=3/viewTransform.scale; const s=1; ctx.beginPath(); ctx.moveTo(getSpiralPoint(sA.position).x,getSpiralPoint(sA.position).y); for (let j=1;j<=Math.floor(Math.abs(sB.position-sA.position)/s);j++)ctx.lineTo(getSpiralPoint(sA.position+(j*s*Math.sign(sB.position-sA.position))).x,getSpiralPoint(sA.position+(j*s*Math.sign(sB.position-sA.position))).y); ctx.lineTo(getSpiralPoint(sB.position).x,getSpiralPoint(sB.position).y);ctx.stroke(); } } }
+            const calculatedPathIds = new Set(calculatedPathNodes.map(p => p.id));
+            if (calculatedPathNodes.length > 1) {
+                for (let i = 0; i < calculatedPathNodes.length - 1; i++) {
+                    const sA = calculatedPathNodes[i];
+                    const sB = calculatedPathNodes[i + 1];
+                    const isKnownSystemA = !sA.id.toString().startsWith('virtual');
+                    const isKnownSystemB = !sB.id.toString().startsWith('virtual');
+
+                    const isWormhole = isKnownSystemA && isKnownSystemB && new Set(wormholes.map(wh => `${Math.min(wh[0],wh[1])}-${Math.max(wh[0],wh[1])}`)).has(`${Math.min(sA.id,sB.id)}-${Math.max(sA.id,sB.id)}`);
+                    const isCatapult = isKnownSystemA && isKnownSystemB && systems[sA.id]?.catapult_radius > 0 && Math.abs(sA.position - sB.position) <= systems[sA.id].catapult_radius;
+                    
+                    if (isWormhole) { ctx.strokeStyle='#ef4444'; ctx.lineWidth=3/viewTransform.scale; ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } 
+                    else if (isCatapult) { ctx.strokeStyle='#a3e635'; ctx.lineWidth=3/viewTransform.scale; ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } 
+                    else { // Sublight travel
+                        ctx.strokeStyle='#f59e0b'; ctx.lineWidth=3/viewTransform.scale;
+                        if (isKnownSystemA && isKnownSystemB) { // Curved path for known systems
+                            const s=1; ctx.beginPath(); ctx.moveTo(getSpiralPoint(sA.position).x,getSpiralPoint(sA.position).y); for (let j=1;j<=Math.floor(Math.abs(sB.position-sA.position)/s);j++)ctx.lineTo(getSpiralPoint(sA.position+(j*s*Math.sign(sB.position-sA.position))).x,getSpiralPoint(sA.position+(j*s*Math.sign(sB.position-sA.position))).y); ctx.lineTo(getSpiralPoint(sB.position).x,getSpiralPoint(sB.position).y);ctx.stroke();
+                        } else { // Straight path for virtual nodes
+                            ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke();
+                        }
+                    }
+                }
+            }
             
-            const pathSet = new Set(calculatedPath);
             Object.values(systems).forEach(sys => {
                 if (typeof sys.x !== 'number' || typeof sys.y !== 'number') { console.error('Skipping rendering of malformed system object:', sys); return; }
-                const isOnPath = pathSet.has(String(sys.id));
+                const isOnPath = calculatedPathIds.has(String(sys.id));
                 const isHovered = hoveredSystem && hoveredSystem.id === sys.id;
                 ctx.fillStyle = isOnPath ? '#f59e0b' : '#38bdf8';
                 ctx.beginPath();
@@ -234,6 +253,25 @@
                     ctx.fillText(labelText, sys.x, sys.y - ((isOnPath || isHovered ? 10 : 8) / viewTransform.scale));
                 }
             });
+
+            // Draw virtual nodes from the calculated path
+            calculatedPathNodes.forEach(node => {
+                if (node.id.toString().startsWith('virtual')) {
+                    const size = 8 / viewTransform.scale;
+                    ctx.strokeStyle = '#f59e0b';
+                    ctx.lineWidth = 2 / viewTransform.scale;
+                    ctx.beginPath();
+                    ctx.moveTo(node.x - size, node.y - size); ctx.lineTo(node.x + size, node.y + size);
+                    ctx.moveTo(node.x + size, node.y - size); ctx.lineTo(node.x - size, node.y + size);
+                    ctx.stroke();
+
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = `${12 / viewTransform.scale}px Inter`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(node.name, node.x, node.y - (size + 4 / viewTransform.scale));
+                }
+            });
+
             ctx.restore();
         }
         
