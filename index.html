@@ -74,7 +74,8 @@
                     <p id="sync-status" class="text-sm text-center text-gray-400 mt-2 h-4" aria-live="assertive"></p>
                 </div>
                 <form id="route-form" class="space-y-4">
-                    <input type="text" id="start-system-input" list="system-list" class="w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="Start System..."><input type="text" id="end-system-input" list="system-list" class="w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="End System...">
+                    <input type="text" id="start-system-input" list="system-list" class="w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="Start System or #Position...">
+                    <input type="text" id="end-system-input" list="system-list" class="w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="End System or #Position...">
                     <datalist id="system-list"></datalist>
                     <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md">Find Shortest Path</button>
                 </form>
@@ -106,7 +107,7 @@
         let activeRouteInput = null;
         let hoveredSystem = null;
         let showUnclaimedNames = false;
-        let highlightedCatapultSystemId = null; // For new catapult highlighting feature
+        let highlightedCatapultSystemId = null;
         const dom = { loginView: document.getElementById('login-view'), mapView: document.getElementById('map-view'), registerView: document.getElementById('register-view'), loginForm: document.getElementById('login-form'), registerForm: document.getElementById('register-form'), profileView: document.getElementById('profile-view'), canvas: document.getElementById('map-canvas'), ctx: document.getElementById('map-canvas').getContext('2d'), loginError: document.getElementById('login-error'), logoutButton: document.getElementById('logout-button'), welcomeMessage: document.getElementById('welcome-message'), syncContainer: document.getElementById('sync-container'), syncButton: document.getElementById('sync-button'), syncStatus: document.getElementById('sync-status'), routeForm: document.getElementById('route-form'), startSystemInput: document.getElementById('start-system-input'), endSystemInput: document.getElementById('end-system-input'), systemDataList: document.getElementById('system-list'), routeDetailsContainer: document.getElementById('route-details'), profileButton: document.getElementById('profile-button'), closeProfileButton: document.getElementById('close-profile-button'), profileForm: document.getElementById('profile-form'), apiKeyInput: document.getElementById('api-key-input'), newPasswordInput: document.getElementById('new-password-input'), profileStatus: document.getElementById('profile-status'), registerError: document.getElementById('register-error'), showRegisterViewButton: document.getElementById('show-register-view-button'), showLoginViewButton: document.getElementById('show-login-view-button'), toggleAllCatapults: document.getElementById('toggle-all-catapults'), userControls: document.getElementById('user-controls'), resetViewButton: document.getElementById('reset-view-button'), toggleUnclaimedNames: document.getElementById('toggle-unclaimed-names') };
 
         const apiFetch = (url, options = {}) => { options.credentials = 'include'; return fetch(url, options); };
@@ -115,10 +116,10 @@
         const handleLogout = async () => { await apiFetch('/logout', { method: 'POST' }); localStorage.removeItem('mapViewTransform'); showLoginView(); };
         const checkLoginStatus = async () => { const r=await apiFetch('/status'); const d=await r.json(); if(d.logged_in)showMapView(d.username, d.is_admin, d.is_developer); else showLoginView(); };
         const handleSync = async () => { dom.syncStatus.textContent = 'Syncing...'; dom.syncButton.disabled = true; try { const r=await apiFetch('/api/sync',{method:'POST'}); const d=await r.json(); dom.syncStatus.textContent = d.message; if (r.ok) await fetchMapData(false); } catch (e) { dom.syncStatus.textContent = 'Error: Could not connect.'; } finally { dom.syncButton.disabled = false; setTimeout(() => { dom.syncStatus.textContent = ''; }, 7000); } };
-        const openProfile = async () => { dom.profileStatus.textContent = ''; dom.newPasswordInput.value = ''; const r=await apiFetch('/api/profile'); const d=await r.json(); dom.apiKeyInput.value = d.api_key || ''; dom.profileView.classList.remove('hidden'); };
+        const openProfile = async () => { dom.profileStatus.textContent = ''; dom.newPasswordInput.value = ''; const r=await apiFetch('/api/profile'); const d=await r.json(); dom.apiKeyInput.value = d.api_key_set ? '(Key is set and encrypted)' : ''; dom.apiKeyInput.placeholder = d.api_key_set ? 'Enter a new key to overwrite' : 'Enter your game API key'; dom.profileView.classList.remove('hidden'); };
         const closeProfile = () => dom.profileView.classList.add('hidden');
-        const handleProfileUpdate = async (e) => { e.preventDefault(); dom.profileStatus.textContent = 'Saving...'; const p={}; if (dom.apiKeyInput.value) p.api_key = dom.apiKeyInput.value; if (dom.newPasswordInput.value) p.password = dom.newPasswordInput.value; const r=await apiFetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); const d=await r.json(); dom.profileStatus.textContent = d.message; setTimeout(closeProfile, 2000); };
-        async function fetchMapData(shouldFit = true) { const r = await apiFetch('/api/systems'); if (!r.ok) { if (r.status === 401) handleLogout(); return; } const d = await r.json(); systems = d.systems; wormholes = d.wormholes; populateDataList(); if (shouldFit) { fitMapToView(); } drawMap(); }
+        const handleProfileUpdate = async (e) => { e.preventDefault(); dom.profileStatus.textContent = 'Saving...'; const p={}; if (dom.apiKeyInput.value && dom.apiKeyInput.value !== '(Key is set and encrypted)') p.api_key = dom.apiKeyInput.value; if (dom.newPasswordInput.value) p.password = dom.newPasswordInput.value; const r=await apiFetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); const d=await r.json(); dom.profileStatus.textContent = d.message; setTimeout(closeProfile, 2000); };
+        async function fetchMapData(shouldFit = true) { try {const r = await apiFetch('/api/systems'); if (!r.ok) { if (r.status === 401) handleLogout(); return; } const d = await r.json(); systems = d.systems; wormholes = d.wormholes; populateDataList(); if (shouldFit) { fitMapToView(); } drawMap();} catch (e) { console.error("Failed to fetch or draw map data:", e); } }
         async function findPath(startId, endId) { const r = await apiFetch('/api/path', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ start_id: startId, end_id: endId }), }); displayPathResults(await r.json()); }
 
         function showLoginView() { dom.mapView.classList.add('hidden'); dom.registerView.classList.add('hidden'); dom.loginView.classList.remove('hidden'); }
@@ -135,16 +136,39 @@
             if (savedView) { viewTransform = JSON.parse(savedView); fetchMapData(false); } 
             else { fetchMapData(true); }
         }
-        function populateDataList() { dom.systemDataList.innerHTML = ''; const n=Object.values(systems).map(s=>s.name).sort(); n.forEach(name => { const o=document.createElement('option'); o.value=name; dom.systemDataList.appendChild(o); }); }
+        function populateDataList() {
+            dom.systemDataList.innerHTML = '';
+            const options = new Set();
+            Object.values(systems).forEach(s => {
+                options.add(s.name);
+                if (s.position) {
+                    options.add(`#${s.position}`);
+                }
+            });
+            Array.from(options).sort().forEach(val => {
+                const o = document.createElement('option');
+                o.value = val;
+                dom.systemDataList.appendChild(o);
+            });
+        }
         
         function displayPathResults(result) {
-            dom.routeDetailsContainer.innerHTML = ''; calculatedPath = result.path || [];
-            const startName = dom.startSystemInput.value; const endName = dom.endSystemInput.value;
-            dom.startSystemInput.value = ''; dom.endSystemInput.value = '';
+            dom.routeDetailsContainer.innerHTML = '';
+            calculatedPath = result.path ? result.path.map(p => p.id) : [];
+            const allNodes = {};
+            if (result.path) {
+                result.path.forEach(p => allNodes[p.id] = p);
+            }
+
+            const startName = dom.startSystemInput.value;
+            const endName = dom.endSystemInput.value;
+            dom.startSystemInput.value = '';
+            dom.endSystemInput.value = '';
+            
             if (result.simple_path && result.simple_path.length > 0 && result.distance != null) {
                 let html = `<div class="flex justify-between items-center"><h2 class="text-lg font-semibold text-white">Route: ${startName} to ${endName}</h2><button id="clear-route-button" class="text-sm text-gray-400 hover:text-white focus:outline-none">&times; Clear</button></div><p class="text-sm text-gray-400">Total Distance: ${result.distance.toFixed(2)}</p><ol class="mt-2 space-y-2 text-sm">`;
-                html += `<li class="text-gray-300">1. Start at: <span class="font-semibold text-white">${systems[result.simple_path[0].from_id]?.name || 'Unknown'}</span></li>`;
-                result.simple_path.forEach((leg, index) => { const travelMethod = leg.method.charAt(0).toUpperCase() + leg.method.slice(1); let color = 'text-amber-400'; if (leg.method === 'wormhole') color = 'text-red-400'; if (leg.method === 'catapult') color = 'text-lime-400'; html += `<li class="text-gray-300">${index + 2}. Travel via <span class="font-semibold ${color}">${travelMethod}</span> to <span class="font-semibold text-white">${systems[leg.to_id]?.name || 'Unknown'}</span></li>`; });
+                html += `<li class="text-gray-300">1. Start at: <span class="font-semibold text-white">${allNodes[result.simple_path[0].from_id]?.name || 'Unknown'}</span></li>`;
+                result.simple_path.forEach((leg, index) => { const travelMethod = leg.method.charAt(0).toUpperCase() + leg.method.slice(1); let color = 'text-amber-400'; if (leg.method === 'wormhole') color = 'text-red-400'; if (leg.method === 'catapult') color = 'text-lime-400'; html += `<li class="text-gray-300">${index + 2}. Travel via <span class="font-semibold ${color}">${travelMethod}</span> to <span class="font-semibold text-white">${allNodes[leg.to_id]?.name || 'Unknown'}</span></li>`; });
                 html += `</ol>`; dom.routeDetailsContainer.innerHTML = html;
             } else { dom.routeDetailsContainer.innerHTML = `<h2 class="text-lg font-semibold text-white">No Route Found</h2><p class="text-yellow-400">A path could not be found between ${startName} and ${endName}.</p>`; }
             drawMap();
@@ -163,44 +187,30 @@
             ctx.translate(viewTransform.translateX, viewTransform.translateY);
             ctx.scale(viewTransform.scale, viewTransform.scale);
 
-            // Draw spiral background
             if(Object.keys(systems).length > 0){ let maxPos=Math.max(...Object.values(systems).filter(s => s.position).map(s=>s.position)); if(maxPos>0){ ctx.strokeStyle='rgba(75,85,99,0.2)';ctx.lineWidth=1/viewTransform.scale;ctx.beginPath();const s=1;ctx.moveTo(0,0);for(let p=s;p<=maxPos*1.1;p+=s)ctx.lineTo(getSpiralPoint(p).x,getSpiralPoint(p).y);ctx.stroke();}}
             
-            // Draw catapult ranges (curved and with highlighting)
             Object.values(systems).forEach(sys => { 
                 if (typeof sys.position !== 'number' || !sys.catapult_radius || sys.catapult_radius <= 0) return;
-
                 const isToggled = toggledCatapultIds.has(String(sys.id));
                 if (showAllCatapults ^ isToggled) {
-                    let rangeColor = 'rgba(132, 204, 22, 0.3)'; // Default green
-                    if (highlightedCatapultSystemId !== null) {
-                        rangeColor = (sys.id === highlightedCatapultSystemId) ? 'rgba(163, 230, 57, 0.9)' : 'rgba(132, 204, 22, 0.05)';
-                    }
-                    ctx.strokeStyle = rangeColor;
-                    ctx.lineWidth = 2 / viewTransform.scale;
-                    const startPos = sys.position - sys.catapult_radius;
-                    const endPos = sys.position + sys.catapult_radius;
+                    let rangeColor = 'rgba(132, 204, 22, 0.3)';
+                    if (highlightedCatapultSystemId !== null) { rangeColor = (sys.id === highlightedCatapultSystemId) ? 'rgba(163, 230, 57, 0.9)' : 'rgba(132, 204, 22, 0.05)'; }
+                    ctx.strokeStyle = rangeColor; ctx.lineWidth = 2 / viewTransform.scale;
+                    const startPos = sys.position - sys.catapult_radius; const endPos = sys.position + sys.catapult_radius;
                     const step = Math.max(1, Math.abs(endPos - startPos) / 100);
-                    ctx.beginPath();
-                    ctx.moveTo(getSpiralPoint(startPos).x, getSpiralPoint(startPos).y);
-                    for (let pos = startPos + step; pos < endPos; pos += step) {
-                        ctx.lineTo(getSpiralPoint(pos).x, getSpiralPoint(pos).y);
-                    }
-                    ctx.lineTo(getSpiralPoint(endPos).x, getSpiralPoint(endPos).y);
-                    ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(getSpiralPoint(startPos).x, getSpiralPoint(startPos).y);
+                    for (let pos = startPos + step; pos < endPos; pos += step) { ctx.lineTo(getSpiralPoint(pos).x, getSpiralPoint(pos).y); }
+                    ctx.lineTo(getSpiralPoint(endPos).x, getSpiralPoint(endPos).y); ctx.stroke();
                 }
             });
 
-            // Draw wormholes
             ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)'; ctx.lineWidth = 1 / viewTransform.scale; ctx.setLineDash([5 / viewTransform.scale, 5 / viewTransform.scale]);
             wormholes.forEach(wh => { const sA=systems[wh[0]], sB=systems[wh[1]]; if (sA && sB) { ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } });
             ctx.setLineDash([]);
             
-            // Draw calculated route path
             const wormholeSet = new Set(wormholes.map(wh => `${Math.min(wh[0],wh[1])}-${Math.max(wh[0],wh[1])}`));
             if (calculatedPath.length > 1) { for (let i = 0; i < calculatedPath.length - 1; i++) { const sA = systems[calculatedPath[i]], sB = systems[calculatedPath[i + 1]]; if (!sA || !sB) continue; const isWormhole = wormholeSet.has(`${Math.min(sA.id,sB.id)}-${Math.max(sA.id,sB.id)}`); const isCatapult = sA.catapult_radius > 0 && Math.abs(sA.position - sB.position) <= sA.catapult_radius; if (isWormhole) { ctx.strokeStyle='#ef4444'; ctx.lineWidth=3/viewTransform.scale; ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } else if (isCatapult) { ctx.strokeStyle='#a3e635'; ctx.lineWidth=3/viewTransform.scale; ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } else { ctx.strokeStyle='#f59e0b'; ctx.lineWidth=3/viewTransform.scale; const s=1; ctx.beginPath(); ctx.moveTo(getSpiralPoint(sA.position).x,getSpiralPoint(sA.position).y); for (let j=1;j<=Math.floor(Math.abs(sB.position-sA.position)/s);j++)ctx.lineTo(getSpiralPoint(sA.position+(j*s*Math.sign(sB.position-sA.position))).x,getSpiralPoint(sA.position+(j*s*Math.sign(sB.position-sA.position))).y); ctx.lineTo(getSpiralPoint(sB.position).x,getSpiralPoint(sB.position).y);ctx.stroke(); } } }
             
-            // Draw systems and labels
             const pathSet = new Set(calculatedPath);
             Object.values(systems).forEach(sys => {
                 if (typeof sys.x !== 'number' || typeof sys.y !== 'number') { console.error('Skipping rendering of malformed system object:', sys); return; }
@@ -212,15 +222,10 @@
                 ctx.fill();
                 
                 let labelText = sys.name;
-                if (sys.name.startsWith("System ") && typeof sys.position === 'number') {
-                    labelText = `#${sys.position}`;
-                }
-
+                if (sys.name.startsWith("System ") && typeof sys.position === 'number') { labelText = `#${sys.position}`; }
                 const isDefaultName = labelText.startsWith("#");
                 let shouldShowLabel = (isOnPath || isHovered || viewTransform.scale > 0.8);
-                if (isDefaultName && !showUnclaimedNames && !isOnPath && !isHovered) {
-                    shouldShowLabel = false;
-                }
+                if (isDefaultName && !showUnclaimedNames && !isOnPath && !isHovered) { shouldShowLabel = false; }
 
                 if (shouldShowLabel) {
                     ctx.fillStyle = (isOnPath || isHovered) ? '#ffffff' : '#e5e7eb';
@@ -239,32 +244,22 @@
         function onMouseMove(e) { const rect = dom.canvas.getBoundingClientRect(), mouseX = e.clientX - rect.left, mouseY = e.clientY - rect.top, worldX = (mouseX-viewTransform.translateX)/viewTransform.scale, worldY = (mouseY-viewTransform.translateY)/viewTransform.scale; let currentlyHovering = null; for(const system of Object.values(systems)){ if(typeof system.x!=='number'||typeof system.y!=='number')continue; const dx=worldX-system.x,dy=worldY-system.y;if(Math.sqrt(dx*dx+dy*dy)<(10/viewTransform.scale)){currentlyHovering=system;break;}} if (hoveredSystem !== currentlyHovering) { hoveredSystem = currentlyHovering; drawMap(); } let cursorStyle = hoveredSystem ? 'pointer' : 'grab'; if(isMouseDown){if(!isDragging&&(Math.abs(e.clientX-dragStartPos.x)>5||Math.abs(e.clientY-dragStartPos.y)>5)){isDragging=true;}if(isDragging){cursorStyle='grabbing';const dx=e.clientX-lastDragPosition.x,dy=e.clientY-lastDragPosition.y;viewTransform.translateX+=dx;viewTransform.translateY+=dy;lastDragPosition={x:e.clientX,y:e.clientY};drawMap();}}else{ dom.canvas.style.cursor = cursorStyle;}}
         
         function onMouseUp(e) {
-            if (!isDragging) { // Only handle as a click if the user wasn't dragging
+            if (!isDragging) {
                 if (hoveredSystem) {
                     if (e.shiftKey && hoveredSystem.catapult_radius > 0) {
                         const systemId = String(hoveredSystem.id);
-                        if (toggledCatapultIds.has(systemId)) {
-                            toggledCatapultIds.delete(systemId);
-                        } else {
-                            toggledCatapultIds.add(systemId);
-                        }
+                        if (toggledCatapultIds.has(systemId)) { toggledCatapultIds.delete(systemId); } else { toggledCatapultIds.add(systemId); }
                     } else if (activeRouteInput) {
                         activeRouteInput.value = hoveredSystem.name;
-                        if (activeRouteInput === dom.startSystemInput) {
-                            dom.endSystemInput.focus();
-                        } else {
-                            dom.routeForm.querySelector('button[type="submit"]').focus();
-                        }
+                        if (activeRouteInput === dom.startSystemInput) { dom.endSystemInput.focus(); } else { dom.routeForm.querySelector('button[type="submit"]').focus(); }
                     }
                     highlightedCatapultSystemId = hoveredSystem.id;
                 } else {
-                    // If clicking on empty canvas space, clear the highlight
                     highlightedCatapultSystemId = null;
                 }
                 drawMap();
             }
-            isMouseDown = false;
-            isDragging = false;
+            isMouseDown = false; isDragging = false;
             dom.canvas.style.cursor = hoveredSystem ? 'pointer' : 'grab';
         }
         
@@ -274,7 +269,31 @@
             dom.toggleAllCatapults.addEventListener('change', handleToggleAllCatapults);
             dom.toggleUnclaimedNames.addEventListener('change', handleToggleUnclaimedNames);
             dom.resetViewButton.addEventListener('click', handleResetView);
-            dom.routeForm.addEventListener('submit', (e) => { e.preventDefault(); const s=Object.values(systems).find(s=>s.name===dom.startSystemInput.value), eSys=Object.values(systems).find(s=>s.name===dom.endSystemInput.value); if(s&&eSys) findPath(String(s.id),String(eSys.id)); });
+            
+            dom.routeForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const startVal = dom.startSystemInput.value.trim();
+                const endVal = dom.endSystemInput.value.trim();
+
+                const parseInput = (val) => {
+                    if (val.startsWith('#')) {
+                        const pos = parseFloat(val.substring(1));
+                        return !isNaN(pos) ? `pos:${pos}` : null;
+                    }
+                    const system = Object.values(systems).find(s => s.name.toLowerCase() === val.toLowerCase() || `#${s.position}` === val);
+                    return system ? `sys:${system.id}` : null;
+                };
+
+                const startId = parseInput(startVal);
+                const endId = parseInput(endVal);
+
+                if (startId && endId) {
+                    findPath(startId, endId);
+                } else {
+                    dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Could not find one or both locations. Please use a known system name or format coordinates as #123.45</p>`;
+                }
+            });
+
             dom.startSystemInput.addEventListener('focus', () => { activeRouteInput = dom.startSystemInput; });
             dom.endSystemInput.addEventListener('focus', () => { activeRouteInput = dom.endSystemInput; });
             document.addEventListener('click', (e) => { if (!dom.routeForm.contains(e.target) && !dom.canvas.contains(e.target)) { activeRouteInput = null; }});

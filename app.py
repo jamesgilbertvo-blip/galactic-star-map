@@ -10,7 +10,7 @@ import sys
 import heapq
 from functools import wraps
 from urllib.parse import urlparse
-from cryptography.fernet import Fernet # <-- New Import
+from cryptography.fernet import Fernet
 
 # --- CONFIGURATION ---
 DATABASE_URL = os.environ.get('DATABASE_URL')
@@ -19,7 +19,6 @@ STATIC_DIR = os.path.dirname(os.path.abspath(__file__))
 # --- ENCRYPTION SETUP ---
 ENCRYPTION_KEY = os.environ.get('ENCRYPTION_KEY')
 if not ENCRYPTION_KEY:
-    # This will cause the app to fail on startup if the key is not set, which is a good safety measure.
     raise ValueError("ENCRYPTION_KEY environment variable not set!")
 fernet = Fernet(ENCRYPTION_KEY.encode())
 
@@ -119,7 +118,6 @@ def sync_data():
         if not encrypted_api_key:
             return jsonify({'message': 'API key not found.'}), 400
         
-        # DECRYPT the key before using it
         api_key = fernet.decrypt(encrypted_api_key.encode()).decode()
 
         faction_info = fetch_api_data(FACTION_API_URL, api_key)
@@ -144,7 +142,6 @@ def sync_data():
             cursor.execute(f"UPDATE users SET faction_id = {param} WHERE id = {param}", (faction_id, user_id))
             session['faction_id'] = faction_id
         
-        # Fetch all game data before processing
         current_system_data = fetch_api_data(CURRENT_SYSTEM_API_URL, api_key)
         systems_data = fetch_api_data(SYSTEMS_API_URL, api_key)
         wormholes_data = fetch_api_data(WORMHOLE_API_URL, api_key)
@@ -153,7 +150,6 @@ def sync_data():
         if not any([current_system_data, systems_data, wormholes_data, structures_data]):
              return jsonify({'message': 'Failed to fetch any data from game API.'}), 500
 
-        # --- Begin database updates within the single transaction ---
         all_systems = {}
         if current_system_data and 'system' in current_system_data:
             for sys_id, sys_info in current_system_data['system'].items(): all_systems[int(sys_id)] = {'system_id': int(sys_id), 'system_name': sys_info['system_name'], 'system_position': sys_info['system_position']}
@@ -194,7 +190,7 @@ def sync_data():
 
     except Exception as e:
         conn.rollback()
-        print(f"ERROR in /api/sync: {e}", file=sys.stderr) # Log the actual error for debugging
+        print(f"ERROR in /api/sync: {e}", file=sys.stderr)
         return jsonify({'error': 'An internal error occurred during sync.'}), 500
     finally:
         if conn:
@@ -225,7 +221,6 @@ def register():
             if pg_compat: cursor.execute(f"INSERT INTO factions (name) VALUES ({param}) RETURNING id", (faction_name,)); faction_id = cursor.fetchone()['id']
             else: cursor.execute("INSERT INTO factions (name) VALUES (?)", (faction_name,)); faction_id = cursor.lastrowid
         
-        # ENCRYPT the API key before saving
         encrypted_api_key = fernet.encrypt(api_key.encode()).decode() if api_key else None
         
         if pg_compat:
@@ -276,7 +271,6 @@ def profile():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
     user_id = session['user_id']; conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?';
     if request.method == 'GET':
-        # We don't return the key for security, just a confirmation if it exists
         cursor.execute(f"SELECT api_key FROM users WHERE id = {param}", (user_id,))
         user = cursor.fetchone()
         conn.close()
@@ -284,7 +278,6 @@ def profile():
     elif request.method == 'POST':
         data = request.get_json(); updates, params = [], []
         
-        # ENCRYPT the new API key if provided
         if data.get('api_key'):
             encrypted_api_key = fernet.encrypt(data.get('api_key').encode()).decode()
             updates.append("api_key = %s")
@@ -305,6 +298,7 @@ def get_all_systems():
     conn, cursor = get_db_connection(); cursor.execute('SELECT id, name, position, catapult_radius FROM systems ORDER BY position ASC'); systems_list = cursor.fetchall(); conn.close()
     return jsonify(systems_list)
 
+# ... (other admin routes remain unchanged) ...
 @app.route('/api/admin/update_system', methods=['POST'])
 @admin_required
 def update_system():
@@ -312,13 +306,11 @@ def update_system():
     if system_id is None or new_radius is None: return jsonify({'error': 'system_id and catapult_radius are required'}), 400
     conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'; cursor.execute(f"UPDATE systems SET catapult_radius = {param} WHERE id = {param}", (new_radius, system_id)); conn.commit(); conn.close()
     return jsonify({'message': f'System {system_id} updated successfully.'})
-
 @app.route('/api/admin/wormholes')
 @admin_required
 def get_all_wormholes():
     conn, cursor = get_db_connection(); cursor.execute('SELECT s1.name as name_a, s2.name as name_b, w.system_a_id, w.system_b_id FROM wormholes w JOIN systems s1 ON w.system_a_id = s1.id JOIN systems s2 ON w.system_b_id = s2.id'); wormholes_list = cursor.fetchall(); conn.close()
     return jsonify(wormholes_list)
-
 @app.route('/api/admin/add_wormhole', methods=['POST'])
 @admin_required
 def add_wormhole():
@@ -330,7 +322,6 @@ def add_wormhole():
     except (sqlite3.IntegrityError, psycopg2.IntegrityError): return jsonify({'error': 'Wormhole already exists or invalid system ID'}), 400
     finally: conn.close()
     return jsonify({'message': 'Wormhole added successfully'})
-
 @app.route('/api/admin/delete_wormhole', methods=['POST'])
 @admin_required
 def delete_wormhole():
@@ -360,56 +351,122 @@ def get_systems_data():
 @app.route('/api/path', methods=['POST'])
 def calculate_path():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
-    data = request.get_json(); start_id, end_id = data.get('start_id'), data.get('end_id')
-    if not start_id or not end_id: return jsonify({'error': 'start_id and end_id are required'}), 400
-    conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
+    data = request.get_json()
+    start_input, end_input = data.get('start_id'), data.get('end_id')
+    if not start_input or not end_input: return jsonify({'error': 'start_id and end_id are required'}), 400
+    
+    conn, cursor = get_db_connection()
+    param = '%s' if bool(DATABASE_URL) else '?'
 
+    # Fetch faction's systems
     if session.get('is_developer'):
-        cursor.execute('SELECT id, position, catapult_radius FROM systems')
-    else: # Admins and regular users pathfind on their faction's map
+        cursor.execute('SELECT id, name, position, catapult_radius FROM systems')
+    else:
         faction_id = session['faction_id']
-        cursor.execute(f'SELECT s.id, s.position, s.catapult_radius FROM systems s JOIN faction_discovered_systems fds ON s.id = fds.system_id WHERE fds.faction_id = {param}', (faction_id,))
+        cursor.execute(f'SELECT s.id, s.name, s.position, s.catapult_radius FROM systems s JOIN faction_discovered_systems fds ON s.id = fds.system_id WHERE fds.faction_id = {param}', (faction_id,))
     
-    all_systems = cursor.fetchall()
-    cursor.execute('SELECT system_a_id, system_b_id FROM wormholes'); all_wormholes = cursor.fetchall(); conn.close()
-    if not all_systems: return jsonify({'path': [], 'distance': None})
-    systems_map = {str(r['id']): {'position': r['position'], 'radius': r['catapult_radius']} for r in all_systems}
+    all_systems_raw = cursor.fetchall()
+    cursor.execute('SELECT system_a_id, system_b_id FROM wormholes')
+    all_wormholes = cursor.fetchall()
+    conn.close()
+
+    if not all_systems_raw: return jsonify({'path': [], 'distance': None})
+
+    systems_map = {str(r['id']): {'name': r['name'], 'position': r['position'], 'radius': r['catapult_radius']} for r in all_systems_raw}
     
+    start_id, end_id = None, None
+    
+    # Process start input
+    if start_input.startswith('pos:'):
+        start_id = 'virtual_start'
+        systems_map[start_id] = {'name': f'Coordinate #{start_input[4:]}', 'position': float(start_input[4:]), 'radius': 0}
+    else: # It's a system ID
+        start_id = start_input.split(':')[1]
+
+    # Process end input
+    if end_input.startswith('pos:'):
+        end_id = 'virtual_end'
+        systems_map[end_id] = {'name': f'Coordinate #{end_input[4:]}', 'position': float(end_input[4:]), 'radius': 0}
+    else: # It's a system ID
+        end_id = end_input.split(':')[1]
+
+    if start_id not in systems_map or end_id not in systems_map:
+        return jsonify({'error': 'Start or end system not found in your map.'}), 404
+
     wormhole_pairs = {tuple(sorted((str(wh['system_a_id']), str(wh['system_b_id'])))) for wh in all_wormholes}
-    distances = {sys_id: float('inf') for sys_id in systems_map}; predecessors = {sys_id: (None, None) for sys_id in systems_map}
-    if start_id not in systems_map: return jsonify({'error': 'Start system not in your map'}), 404
-    distances[start_id] = 0; pq = [(0, start_id)]
+    distances = {sys_id: float('inf') for sys_id in systems_map}
+    predecessors = {sys_id: (None, None) for sys_id in systems_map}
+    
+    distances[start_id] = 0
+    pq = [(0, start_id)]
+
     while pq:
         current_distance, current_id = heapq.heappop(pq)
         if current_distance > distances[current_id]: continue
         if current_id == end_id: break
+        
         for neighbor_id in systems_map:
             if neighbor_id == current_id: continue
+            
+            # --- Calculate cost to neighbor ---
+            cost, method = float('inf'), None
+            
+            # 1. Sublight Travel (always possible)
             sublight_dist = abs(systems_map[current_id]['position'] - systems_map[neighbor_id]['position'])
-            if current_distance + sublight_dist < distances[neighbor_id]:
-                distances[neighbor_id] = current_distance + sublight_dist; predecessors[neighbor_id] = (current_id, 'sublight'); heapq.heappush(pq, (distances[neighbor_id], neighbor_id))
+            cost, method = sublight_dist, 'sublight'
+            
+            # 2. Wormhole (zero-cost override)
             id_pair = tuple(sorted((current_id, neighbor_id)))
             if id_pair in wormhole_pairs:
-                if current_distance < distances[neighbor_id]:
-                    distances[neighbor_id] = current_distance; predecessors[neighbor_id] = (current_id, 'wormhole'); heapq.heappush(pq, (distances[neighbor_id], neighbor_id))
+                cost, method = 0, 'wormhole'
+            
+            # 3. Catapult (zero-cost override)
             current_sys_info = systems_map[current_id]
-            if current_sys_info['radius'] > 0 and abs(current_sys_info['position'] - systems_map[neighbor_id]['position']) <= current_sys_info['radius']:
-                if current_distance < distances[neighbor_id]:
-                    distances[neighbor_id] = current_distance; predecessors[neighbor_id] = (current_id, 'catapult'); heapq.heappush(pq, (distances[neighbor_id], neighbor_id))
-    full_path_ids, current_id, total_distance = [], end_id, distances.get(end_id)
-    if total_distance is None or total_distance == float('inf'): return jsonify({'path': [], 'distance': None})
-    while current_id: full_path_ids.append(current_id); current_id, _ = predecessors.get(current_id, (None, None))
+            if current_sys_info.get('radius', 0) > 0 and abs(current_sys_info['position'] - systems_map[neighbor_id]['position']) <= current_sys_info['radius']:
+                cost, method = 0, 'catapult'
+            
+            # Update path if a cheaper one is found
+            if distances[current_id] + cost < distances[neighbor_id]:
+                distances[neighbor_id] = distances[current_id] + cost
+                predecessors[neighbor_id] = (current_id, method)
+                heapq.heappush(pq, (distances[neighbor_id], neighbor_id))
+                
+    # --- Reconstruct Path ---
+    full_path_ids, current_node, total_distance = [], end_id, distances.get(end_id)
+    if total_distance is None or total_distance == float('inf'):
+        return jsonify({'path': [], 'distance': None})
+        
+    while current_node is not None:
+        full_path_ids.append(current_node)
+        current_node, _ = predecessors.get(current_node, (None, None))
     full_path_ids.reverse()
-    if not full_path_ids or full_path_ids[0] != start_id: return jsonify({'path': [], 'distance': None})
-    if len(full_path_ids) <= 1: return jsonify({'path': full_path_ids, 'simple_path': [], 'distance': total_distance})
-    simple_path = []; current_leg_start_id = full_path_ids[0]; _, current_method = predecessors[full_path_ids[1]]
+
+    if not full_path_ids or full_path_ids[0] != start_id:
+        return jsonify({'path': [], 'distance': None})
+
+    path_for_json = [{'id': sys_id, 'name': systems_map[sys_id]['name']} for sys_id in full_path_ids]
+
+    if len(full_path_ids) <= 1:
+        return jsonify({'path': path_for_json, 'simple_path': [], 'distance': total_distance})
+
+    simple_path = []
+    current_leg_start_node = full_path_ids[0]
+    _, current_method = predecessors[full_path_ids[1]]
+
     for i in range(1, len(full_path_ids)):
-        _, step_method = predecessors[full_path_ids[i]]
+        prev_node = full_path_ids[i-1]
+        current_node = full_path_ids[i]
+        _, step_method = predecessors[current_node]
+        
         if step_method != current_method:
-            simple_path.append({'from_id': current_leg_start_id, 'to_id': full_path_ids[i-1], 'method': current_method})
-            current_leg_start_id = full_path_ids[i-1]; current_method = step_method
-    simple_path.append({'from_id': current_leg_start_id, 'to_id': full_path_ids[-1], 'method': current_method})
-    return jsonify({'path': full_path_ids, 'simple_path': simple_path, 'distance': total_distance})
+            simple_path.append({'from_id': current_leg_start_node, 'to_id': prev_node, 'method': current_method})
+            current_leg_start_node = prev_node
+            current_method = step_method
+            
+    simple_path.append({'from_id': current_leg_start_node, 'to_id': full_path_ids[-1], 'method': current_method})
+    
+    return jsonify({'path': path_for_json, 'simple_path': simple_path, 'distance': total_distance})
+
 
 # This call ensures the database is set up when the app starts.
 setup_database_if_needed()
