@@ -196,7 +196,9 @@
                     if (highlightedCatapultSystemId !== null) { rangeColor = (sys.id === highlightedCatapultSystemId) ? 'rgba(163, 230, 57, 0.9)' : 'rgba(132, 204, 22, 0.05)'; }
                     ctx.strokeStyle = rangeColor; ctx.lineWidth = 2 / viewTransform.scale;
                     const startPos = sys.position - sys.catapult_radius; const endPos = sys.position + sys.catapult_radius;
-                    const step = Math.max(1, Math.abs(endPos - startPos) / 100);
+                    // --- FIX IS HERE ---
+                    // The step value is now 1, making the curve perfectly smooth
+                    const step = 1; 
                     ctx.beginPath(); ctx.moveTo(getSpiralPoint(startPos).x, getSpiralPoint(startPos).y);
                     for (let pos = startPos + step; pos < endPos; pos += step) { ctx.lineTo(getSpiralPoint(pos).x, getSpiralPoint(pos).y); }
                     ctx.lineTo(getSpiralPoint(endPos).x, getSpiralPoint(endPos).y); ctx.stroke();
@@ -222,11 +224,9 @@
                     else if (isCatapult) { ctx.strokeStyle='#a3e635'; ctx.lineWidth=3/viewTransform.scale; ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } 
                     else { // Sublight travel
                         ctx.strokeStyle='#f59e0b'; ctx.lineWidth=3/viewTransform.scale;
-                        if (isKnownSystemA && isKnownSystemB) { // Curved path for known systems
-                            const s=1; ctx.beginPath(); ctx.moveTo(getSpiralPoint(sA.position).x,getSpiralPoint(sA.position).y); for (let j=1;j<=Math.floor(Math.abs(sB.position-sA.position)/s);j++)ctx.lineTo(getSpiralPoint(sA.position+(j*s*Math.sign(sB.position-sA.position))).x,getSpiralPoint(sA.position+(j*s*Math.sign(sB.position-sA.position))).y); ctx.lineTo(getSpiralPoint(sB.position).x,getSpiralPoint(sB.position).y);ctx.stroke();
-                        } else { // Straight path for virtual nodes
-                            ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke();
-                        }
+                        // --- FIX IS HERE ---
+                        // Always draw a curved path for sublight, since all nodes have a position property
+                        const s=1; ctx.beginPath(); ctx.moveTo(getSpiralPoint(sA.position).x,getSpiralPoint(sA.position).y); for (let j=1;j<=Math.floor(Math.abs(sB.position-sA.position)/s);j++)ctx.lineTo(getSpiralPoint(sA.position+(j*s*Math.sign(sB.position-sA.position))).x,getSpiralPoint(sA.position+(j*s*Math.sign(sB.position-sA.position))).y); ctx.lineTo(getSpiralPoint(sB.position).x,getSpiralPoint(sB.position).y);ctx.stroke();
                     }
                 }
             }
@@ -254,7 +254,6 @@
                 }
             });
 
-            // Draw virtual nodes from the calculated path
             calculatedPathNodes.forEach(node => {
                 if (node.id.toString().startsWith('virtual')) {
                     const size = 8 / viewTransform.scale;
