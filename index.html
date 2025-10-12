@@ -36,7 +36,12 @@
         <div class="w-full max-w-md p-8 space-y-8 bg-gray-900 rounded-lg shadow-lg">
             <div><h2 class="text-3xl font-extrabold text-center text-white">Create Account</h2><p class="mt-2 text-sm text-center text-gray-400">to start building your map</p></div>
             <form id="register-form" class="mt-8 space-y-6">
-                <div class="rounded-md shadow-sm -space-y-px"><input id="register-username" name="username" type="text" required class="w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 rounded-t-md placeholder-gray-400 focus:outline-none focus:ring-indigo-500" placeholder="Username"><input id="register-password" name="password" type="password" required class="w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 placeholder-gray-400 focus:outline-none focus:ring-indigo-500" placeholder="Password"><input id="register-api-key" name="api_key" type="text" required class="w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 rounded-b-md placeholder-gray-400 focus:outline-none focus:ring-indigo-500" placeholder="Game API Key"></div>
+                <div class="rounded-md shadow-sm -space-y-px">
+                    <input id="register-username" name="username" type="text" required class="w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 rounded-t-md placeholder-gray-400 focus:outline-none focus:ring-indigo-500" placeholder="Username">
+                    <input id="register-password" name="password" type="password" required class="w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 placeholder-gray-400 focus:outline-none focus:ring-indigo-500" placeholder="Password">
+                    <input id="register-api-key" name="api_key" type="text" required class="w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 rounded-b-md placeholder-gray-400 focus:outline-none focus:ring-indigo-500" placeholder="Game API Key">
+                </div>
+                <p class="text-xs text-gray-400 text-center px-2">Please be aware that using an API key on any third-party service carries inherent security risks, even with encryption.</p>
                 <div><button type="submit" class="w-full px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700">Create Account</button></div>
                  <p id="register-error" class="text-sm text-center text-red-400 h-4" aria-live="assertive"></p>
             </form>
@@ -112,7 +117,7 @@
 
         const apiFetch = (url, options = {}) => { options.credentials = 'include'; return fetch(url, options); };
         const handleLogin = async (e) => { e.preventDefault(); const r=await apiFetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:dom.loginForm.username.value,password:dom.loginForm.password.value})}); const d=await r.json(); if(r.ok)showMapView(d.username, d.is_admin, d.is_developer); else dom.loginError.textContent=d.message||'Login failed.'; };
-        const handleRegister = async (e) => { e.preventDefault(); const p={username:dom.registerForm.username.value,password:dom.registerForm.password.value,api_key:dom.registerForm.api_key.value}; const r=await apiFetch('/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); const d=await r.json(); if(r.ok)showMapView(d.username, d.is_admin, d.is_developer); else dom.registerError.textContent=d.message||'Registration failed.'; };
+        const handleRegister = async (e) => { e.preventDefault(); const p={username:dom.registerForm.username.value,password:dom.registerForm.password.value,api_key:dom.registerForm.api_key.value}; const r=await apiFetch('/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); const d=await r.json(); if(r.ok)showMapView(d.username, d.is_admin, d.is_developer, true); else dom.registerError.textContent=d.message||'Registration failed.'; };
         const handleLogout = async () => { await apiFetch('/logout', { method: 'POST' }); localStorage.removeItem('mapViewTransform'); showLoginView(); };
         const checkLoginStatus = async () => { const r=await apiFetch('/status'); const d=await r.json(); if(d.logged_in)showMapView(d.username, d.is_admin, d.is_developer); else showLoginView(); };
         const handleSync = async () => { dom.syncStatus.textContent = 'Syncing...'; dom.syncButton.disabled = true; try { const r=await apiFetch('/api/sync',{method:'POST'}); const d=await r.json(); dom.syncStatus.textContent = d.message; if (r.ok) await fetchMapData(false); } catch (e) { dom.syncStatus.textContent = 'Error: Could not connect.'; } finally { dom.syncButton.disabled = false; setTimeout(() => { dom.syncStatus.textContent = ''; }, 7000); } };
@@ -124,18 +129,29 @@
 
         function showLoginView() { dom.mapView.classList.add('hidden'); dom.registerView.classList.add('hidden'); dom.loginView.classList.remove('hidden'); }
         function showRegisterView() { dom.mapView.classList.add('hidden'); dom.loginView.classList.add('hidden'); dom.registerView.classList.remove('hidden'); }
-        function showMapView(username, isAdmin, isDeveloper) {
+        function showMapView(username, isAdmin, isDeveloper, isNewRegistration = false) {
             dom.loginView.classList.add('hidden'); dom.registerView.classList.add('hidden'); dom.mapView.classList.remove('hidden');
             dom.welcomeMessage.textContent = `Welcome, ${username}`;
             let adminBtn = document.getElementById('admin-button');
             if (isAdmin && !adminBtn) { adminBtn = document.createElement('a'); adminBtn.id = 'admin-button'; adminBtn.href = '/admin'; adminBtn.textContent = 'Admin'; adminBtn.className = 'px-3 py-1 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700'; dom.userControls.prepend(adminBtn); } 
             else if (!isAdmin && adminBtn) { adminBtn.remove(); }
             if (isDeveloper) { dom.syncContainer.classList.add('hidden'); } else { dom.syncContainer.classList.remove('hidden'); }
+            
             resizeCanvas(); 
-            const savedView = localStorage.getItem('mapViewTransform');
-            if (savedView) { viewTransform = JSON.parse(savedView); fetchMapData(false); } 
-            else { fetchMapData(true); }
+
+            if (!isNewRegistration) {
+                const savedView = localStorage.getItem('mapViewTransform');
+                if (savedView) { 
+                    viewTransform = JSON.parse(savedView); 
+                    fetchMapData(false); 
+                } else { 
+                    fetchMapData(true); 
+                }
+            } else {
+                drawMap();
+            }
         }
+
         function populateDataList() {
             dom.systemDataList.innerHTML = '';
             const options = new Set();
@@ -196,8 +212,6 @@
                     if (highlightedCatapultSystemId !== null) { rangeColor = (sys.id === highlightedCatapultSystemId) ? 'rgba(163, 230, 57, 0.9)' : 'rgba(132, 204, 22, 0.05)'; }
                     ctx.strokeStyle = rangeColor; ctx.lineWidth = 2 / viewTransform.scale;
                     const startPos = sys.position - sys.catapult_radius; const endPos = sys.position + sys.catapult_radius;
-                    // --- FIX IS HERE ---
-                    // The step value is now 1, making the curve perfectly smooth
                     const step = 1; 
                     ctx.beginPath(); ctx.moveTo(getSpiralPoint(startPos).x, getSpiralPoint(startPos).y);
                     for (let pos = startPos + step; pos < endPos; pos += step) { ctx.lineTo(getSpiralPoint(pos).x, getSpiralPoint(pos).y); }
@@ -216,16 +230,12 @@
                     const sB = calculatedPathNodes[i + 1];
                     const isKnownSystemA = !sA.id.toString().startsWith('virtual');
                     const isKnownSystemB = !sB.id.toString().startsWith('virtual');
-
                     const isWormhole = isKnownSystemA && isKnownSystemB && new Set(wormholes.map(wh => `${Math.min(wh[0],wh[1])}-${Math.max(wh[0],wh[1])}`)).has(`${Math.min(sA.id,sB.id)}-${Math.max(sA.id,sB.id)}`);
                     const isCatapult = isKnownSystemA && isKnownSystemB && systems[sA.id]?.catapult_radius > 0 && Math.abs(sA.position - sB.position) <= systems[sA.id].catapult_radius;
-                    
                     if (isWormhole) { ctx.strokeStyle='#ef4444'; ctx.lineWidth=3/viewTransform.scale; ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } 
                     else if (isCatapult) { ctx.strokeStyle='#a3e635'; ctx.lineWidth=3/viewTransform.scale; ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } 
-                    else { // Sublight travel
+                    else { 
                         ctx.strokeStyle='#f59e0b'; ctx.lineWidth=3/viewTransform.scale;
-                        // --- FIX IS HERE ---
-                        // Always draw a curved path for sublight, since all nodes have a position property
                         const s=1; ctx.beginPath(); ctx.moveTo(getSpiralPoint(sA.position).x,getSpiralPoint(sA.position).y); for (let j=1;j<=Math.floor(Math.abs(sB.position-sA.position)/s);j++)ctx.lineTo(getSpiralPoint(sA.position+(j*s*Math.sign(sB.position-sA.position))).x,getSpiralPoint(sA.position+(j*s*Math.sign(sB.position-sA.position))).y); ctx.lineTo(getSpiralPoint(sB.position).x,getSpiralPoint(sB.position).y);ctx.stroke();
                     }
                 }
@@ -239,13 +249,11 @@
                 ctx.beginPath();
                 ctx.arc(sys.x, sys.y, (isOnPath || isHovered ? 6 : 4) / viewTransform.scale, 0, Math.PI * 2);
                 ctx.fill();
-                
                 let labelText = sys.name;
                 if (sys.name.startsWith("System ") && typeof sys.position === 'number') { labelText = `#${sys.position}`; }
                 const isDefaultName = labelText.startsWith("#");
                 let shouldShowLabel = (isOnPath || isHovered || viewTransform.scale > 0.8);
                 if (isDefaultName && !showUnclaimedNames && !isOnPath && !isHovered) { shouldShowLabel = false; }
-
                 if (shouldShowLabel) {
                     ctx.fillStyle = (isOnPath || isHovered) ? '#ffffff' : '#e5e7eb';
                     ctx.font = `${(isOnPath || isHovered ? 12 : 10) / viewTransform.scale}px Inter`;
@@ -253,7 +261,6 @@
                     ctx.fillText(labelText, sys.x, sys.y - ((isOnPath || isHovered ? 10 : 8) / viewTransform.scale));
                 }
             });
-
             calculatedPathNodes.forEach(node => {
                 if (node.id.toString().startsWith('virtual')) {
                     const size = 8 / viewTransform.scale;
@@ -263,23 +270,19 @@
                     ctx.moveTo(node.x - size, node.y - size); ctx.lineTo(node.x + size, node.y + size);
                     ctx.moveTo(node.x + size, node.y - size); ctx.lineTo(node.x - size, node.y + size);
                     ctx.stroke();
-
                     ctx.fillStyle = '#ffffff';
                     ctx.font = `${12 / viewTransform.scale}px Inter`;
                     ctx.textAlign = 'center';
                     ctx.fillText(node.name, node.x, node.y - (size + 4 / viewTransform.scale));
                 }
             });
-
             ctx.restore();
         }
-        
         function handleToggleAllCatapults(e) { showAllCatapults = e.target.checked; toggledCatapultIds.clear(); drawMap(); }
         function handleToggleUnclaimedNames(e) { showUnclaimedNames = e.target.checked; drawMap(); }
         function handleResetView() { fitMapToView(); drawMap(); }
         function onMouseDown(e) { isMouseDown = true; isDragging = false; dragStartPos = { x: e.clientX, y: e.clientY }; lastDragPosition = { x: e.clientX, y: e.clientY }; }
         function onMouseMove(e) { const rect = dom.canvas.getBoundingClientRect(), mouseX = e.clientX - rect.left, mouseY = e.clientY - rect.top, worldX = (mouseX-viewTransform.translateX)/viewTransform.scale, worldY = (mouseY-viewTransform.translateY)/viewTransform.scale; let currentlyHovering = null; for(const system of Object.values(systems)){ if(typeof system.x!=='number'||typeof system.y!=='number')continue; const dx=worldX-system.x,dy=worldY-system.y;if(Math.sqrt(dx*dx+dy*dy)<(10/viewTransform.scale)){currentlyHovering=system;break;}} if (hoveredSystem !== currentlyHovering) { hoveredSystem = currentlyHovering; drawMap(); } let cursorStyle = hoveredSystem ? 'pointer' : 'grab'; if(isMouseDown){if(!isDragging&&(Math.abs(e.clientX-dragStartPos.x)>5||Math.abs(e.clientY-dragStartPos.y)>5)){isDragging=true;}if(isDragging){cursorStyle='grabbing';const dx=e.clientX-lastDragPosition.x,dy=e.clientY-lastDragPosition.y;viewTransform.translateX+=dx;viewTransform.translateY+=dy;lastDragPosition={x:e.clientX,y:e.clientY};drawMap();}}else{ dom.canvas.style.cursor = cursorStyle;}}
-        
         function onMouseUp(e) {
             if (!isDragging) {
                 if (hoveredSystem) {
@@ -299,19 +302,24 @@
             isMouseDown = false; isDragging = false;
             dom.canvas.style.cursor = hoveredSystem ? 'pointer' : 'grab';
         }
-        
         function setupEventListeners() {
             window.addEventListener('resize', resizeCanvas);
-            dom.loginForm.addEventListener('submit', handleLogin); dom.registerForm.addEventListener('submit', handleRegister); dom.logoutButton.addEventListener('click', handleLogout); dom.syncButton.addEventListener('click', handleSync); dom.profileButton.addEventListener('click', openProfile); dom.closeProfileButton.addEventListener('click', closeProfile); dom.profileForm.addEventListener('submit', handleProfileUpdate); dom.showRegisterViewButton.addEventListener('click', showRegisterView); dom.showLoginViewButton.addEventListener('click', showLoginView);
+            dom.loginForm.addEventListener('submit', handleLogin);
+            dom.registerForm.addEventListener('submit', handleRegister);
+            dom.logoutButton.addEventListener('click', handleLogout);
+            dom.syncButton.addEventListener('click', handleSync);
+            dom.profileButton.addEventListener('click', openProfile);
+            dom.closeProfileButton.addEventListener('click', closeProfile);
+            dom.profileForm.addEventListener('submit', handleProfileUpdate);
+            dom.showRegisterViewButton.addEventListener('click', showRegisterView);
+            dom.showLoginViewButton.addEventListener('click', showLoginView);
             dom.toggleAllCatapults.addEventListener('change', handleToggleAllCatapults);
             dom.toggleUnclaimedNames.addEventListener('change', handleToggleUnclaimedNames);
             dom.resetViewButton.addEventListener('click', handleResetView);
-            
             dom.routeForm.addEventListener('submit', (e) => {
                 e.preventDefault();
                 const startVal = dom.startSystemInput.value.trim();
                 const endVal = dom.endSystemInput.value.trim();
-
                 const parseInput = (val) => {
                     if (val.startsWith('#')) {
                         const pos = parseFloat(val.substring(1));
@@ -320,22 +328,22 @@
                     const system = Object.values(systems).find(s => s.name.toLowerCase() === val.toLowerCase() || `#${s.position}` === val);
                     return system ? `sys:${system.id}` : null;
                 };
-
                 const startId = parseInput(startVal);
                 const endId = parseInput(endVal);
-
                 if (startId && endId) {
                     findPath(startId, endId);
                 } else {
                     dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Could not find one or both locations. Please use a known system name or format coordinates as #123.45</p>`;
                 }
             });
-
             dom.startSystemInput.addEventListener('focus', () => { activeRouteInput = dom.startSystemInput; });
             dom.endSystemInput.addEventListener('focus', () => { activeRouteInput = dom.endSystemInput; });
             document.addEventListener('click', (e) => { if (!dom.routeForm.contains(e.target) && !dom.canvas.contains(e.target)) { activeRouteInput = null; }});
             dom.routeDetailsContainer.addEventListener('click', (e) => { if (e.target && e.target.id === 'clear-route-button') { clearRouteDisplay(); } });
-            dom.canvas.addEventListener('mousedown', onMouseDown); dom.canvas.addEventListener('mousemove', onMouseMove); dom.canvas.addEventListener('mouseup', onMouseUp); dom.canvas.addEventListener('mouseleave', () => { isMouseDown = false; isDragging = false; dom.canvas.style.cursor = 'grab'; });
+            dom.canvas.addEventListener('mousedown', onMouseDown);
+            dom.canvas.addEventListener('mousemove', onMouseMove);
+            dom.canvas.addEventListener('mouseup', onMouseUp);
+            dom.canvas.addEventListener('mouseleave', () => { isMouseDown = false; isDragging = false; dom.canvas.style.cursor = 'grab'; });
             dom.canvas.addEventListener('wheel', (e) => { e.preventDefault(); const s=1.1, mX=e.clientX-dom.canvas.offsetLeft, mY=e.clientY-dom.canvas.offsetTop; const wX=(mX-viewTransform.translateX)/viewTransform.scale, wY=(mY-viewTransform.translateY)/viewTransform.scale; if(e.deltaY<0)viewTransform.scale*=s; else viewTransform.scale/=s; viewTransform.translateX=mX-wX*viewTransform.scale; viewTransform.translateY=mY-wY*viewTransform.scale; drawMap(); localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform)); });
         }
         
