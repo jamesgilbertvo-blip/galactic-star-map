@@ -147,46 +147,39 @@ def sync_data():
             cursor.execute(f"UPDATE users SET faction_id = {param} WHERE id = {param}", (faction_id, user_id)); session['faction_id'] = faction_id
         
         relationship_data = fetch_api_data(RELATIONSHIPS_API_URL, api_key)
-        if relationship_data:
+        if relationship_data and 'karma' in relationship_data:
             cursor.execute(f"DELETE FROM faction_relationships WHERE faction_a_id = {param} OR faction_b_id = {param}", (faction_id, faction_id))
-            relationships_to_add = []
             
-            # --- FIX IS HERE ---
-            # Handle both object and array data structures from the API
-            alliance_list = relationship_data.get('alliance', [])
-            if isinstance(alliance_list, dict):
-                alliance_list = alliance_list.values()
+            for item in relationship_data['karma'].values():
+                status = None
+                if item.get('computed', {}).get('alliance'):
+                    status = 'allied'
+                elif item.get('computed', {}).get('war'):
+                    status = 'war'
 
-            war_list = relationship_data.get('war', [])
-            if isinstance(war_list, dict):
-                war_list = war_list.values()
-
-            for item in alliance_list:
-                if item.get('faction_name') and item['faction_name'] != faction_name:
-                    relationships_to_add.append({'name': item['faction_name'], 'status': 'allied'})
-
-            for item in war_list:
-                if item.get('faction_name') and item['faction_name'] != faction_name:
-                    relationships_to_add.append({'name': item['faction_name'], 'status': 'war'})
-            
-            for rel in relationships_to_add:
-                cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (rel['name'],))
-                other_fac_row = cursor.fetchone()
-                if other_fac_row:
-                    other_fac_id = other_fac_row['id']
-                else:
-                    if pg_compat:
-                        cursor.execute(f"INSERT INTO factions (name) VALUES ({param}) RETURNING id", (rel['name'],)); other_fac_id = cursor.fetchone()['id']
+                # --- CORRECTED LOGIC IS HERE ---
+                # We process all entries, letting the DB handle self-relationships
+                if status and item.get('faction_name'):
+                    cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (item['faction_name'],))
+                    other_fac_row = cursor.fetchone()
+                    if other_fac_row:
+                        other_fac_id = other_fac_row['id']
                     else:
-                        cursor.execute("INSERT INTO factions (name) VALUES (?)", (rel['name'],)); other_fac_id = cursor.lastrowid
-                
-                fac_a = min(faction_id, other_fac_id)
-                fac_b = max(faction_id, other_fac_id)
-                if fac_a != fac_b:
-                    if pg_compat:
-                        cursor.execute(f"INSERT INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES ({param}, {param}, {param}) ON CONFLICT DO NOTHING", (fac_a, fac_b, rel['status']))
-                    else:
-                        cursor.execute("INSERT OR IGNORE INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES (?, ?, ?)", (fac_a, fac_b, rel['status']))
+                        if pg_compat:
+                            cursor.execute(f"INSERT INTO factions (name) VALUES ({param}) RETURNING id", (item['faction_name'],)); other_fac_id = cursor.fetchone()['id']
+                        else:
+                            cursor.execute("INSERT INTO factions (name) VALUES (?)", (item['faction_name'],)); other_fac_id = cursor.lastrowid
+                    
+                    fac_a = min(faction_id, other_fac_id)
+                    fac_b = max(faction_id, other_fac_id)
+                    
+                    # This check now correctly prevents self-alliances
+                    if fac_a != fac_b:
+                        if pg_compat:
+                            cursor.execute(f"INSERT INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES ({param}, {param}, {param}) ON CONFLICT DO NOTHING", (fac_a, fac_b, status))
+                        else:
+                            cursor.execute("INSERT OR IGNORE INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES (?, ?, ?)", (fac_a, fac_b, status))
+        # --- End of relationship sync ---
 
         current_system_data = fetch_api_data(CURRENT_SYSTEM_API_URL, api_key)
         systems_data = fetch_api_data(SYSTEMS_API_URL, api_key)
