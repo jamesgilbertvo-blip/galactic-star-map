@@ -146,38 +146,58 @@ def sync_data():
         if user['faction_id'] != faction_id:
             cursor.execute(f"UPDATE users SET faction_id = {param} WHERE id = {param}", (faction_id, user_id)); session['faction_id'] = faction_id
         
+        # --- DEBUG ---
+        print(f"\n[DEBUG] Starting relationship sync for faction: '{faction_name}' (DB ID: {faction_id})", file=sys.stderr)
+        
         relationship_data = fetch_api_data(RELATIONSHIPS_API_URL, api_key)
+        
+        # --- DEBUG ---
+        print(f"[DEBUG] Fetched relationship data from API: {relationship_data is not None}", file=sys.stderr)
+
         if relationship_data:
             cursor.execute(f"DELETE FROM faction_relationships WHERE faction_a_id = {param} OR faction_b_id = {param}", (faction_id, faction_id))
+            
+            # --- DEBUG ---
+            print(f"[DEBUG] Cleared old relationships for faction ID {faction_id}.", file=sys.stderr)
+
             relationships_to_add = []
             
             if 'alliance' in relationship_data and relationship_data['alliance']:
                 for item in relationship_data['alliance'].values():
-                    # --- FIX IS HERE ---
-                    # Only process factions that are NOT the user's own faction
                     if item['faction_name'] != faction_name:
                         relationships_to_add.append({'name': item['faction_name'], 'status': 'allied'})
 
             if 'war' in relationship_data and relationship_data['war']:
                 for item in relationship_data['war'].values():
-                    # --- FIX IS HERE ---
                     if item['faction_name'] != faction_name:
                         relationships_to_add.append({'name': item['faction_name'], 'status': 'war'})
             
+            # --- DEBUG ---
+            print(f"[DEBUG] Found {len(relationships_to_add)} relationships to process.", file=sys.stderr)
+
             for rel in relationships_to_add:
+                # --- DEBUG ---
+                print(f"[DEBUG] Processing: {rel['name']} ({rel['status']})", file=sys.stderr)
+                
                 cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (rel['name'],))
                 other_fac_row = cursor.fetchone()
                 if other_fac_row:
                     other_fac_id = other_fac_row['id']
+                    # --- DEBUG ---
+                    print(f"[DEBUG] -> Found existing faction in DB with ID: {other_fac_id}", file=sys.stderr)
                 else:
                     if pg_compat:
                         cursor.execute(f"INSERT INTO factions (name) VALUES ({param}) RETURNING id", (rel['name'],)); other_fac_id = cursor.fetchone()['id']
                     else:
                         cursor.execute("INSERT INTO factions (name) VALUES (?)", (rel['name'],)); other_fac_id = cursor.lastrowid
-                
+                    # --- DEBUG ---
+                    print(f"[DEBUG] -> Created new faction in DB with ID: {other_fac_id}", file=sys.stderr)
+
                 fac_a = min(faction_id, other_fac_id)
                 fac_b = max(faction_id, other_fac_id)
                 if fac_a != fac_b:
+                    # --- DEBUG ---
+                    print(f"[DEBUG] --> Inserting into DB: ({fac_a}, {fac_b}, {rel['status']})", file=sys.stderr)
                     if pg_compat:
                         cursor.execute(f"INSERT INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES ({param}, {param}, {param}) ON CONFLICT DO NOTHING", (fac_a, fac_b, rel['status']))
                     else:
@@ -255,6 +275,8 @@ def sync_data():
         if conn: conn.close()
         
 # ... (The rest of the file is unchanged) ...
+# ... I'm providing the full file below to avoid any copy/paste issues.
+
 @app.route('/register', methods=['POST'])
 def register():
     data = request.get_json(); username, password, api_key = data.get('username'), data.get('password'), data.get('api_key')
