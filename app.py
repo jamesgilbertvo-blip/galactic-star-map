@@ -147,27 +147,48 @@ def sync_data():
             cursor.execute(f"UPDATE users SET faction_id = {param} WHERE id = {param}", (faction_id, user_id)); session['faction_id'] = faction_id
         
         relationship_data = fetch_api_data(RELATIONSHIPS_API_URL, api_key)
+        
+        # --- DEBUG ---
+        print("\n--- RELATIONSHIP SYNC DEBUG ---", file=sys.stderr)
+        print(f"Syncing for faction: '{faction_name}' (DB ID: {faction_id})", file=sys.stderr)
+        
         if relationship_data:
             cursor.execute(f"DELETE FROM faction_relationships WHERE faction_a_id = {param} OR faction_b_id = {param}", (faction_id, faction_id))
             
-            # --- FINAL CORRECTED LOGIC ---
+            # --- DEBUG ---
+            print("1. Cleared old relationships from DB.", file=sys.stderr)
+            
             all_relationships_from_api = []
             
             alliance_data = relationship_data.get('alliance', {})
+            war_data = relationship_data.get('war', [])
+            
+            # --- DEBUG ---
+            print(f"2. Alliance data from API is a dictionary: {isinstance(alliance_data, dict)}", file=sys.stderr)
+            print(f"3. War data from API is a list: {isinstance(war_data, list)}", file=sys.stderr)
+
             if isinstance(alliance_data, dict):
-                for item in alliance_data.values():
+                for key, item in alliance_data.items():
+                    # --- DEBUG ---
+                    print(f"   - Processing Alliance Item '{key}': {item.get('faction_name')}", file=sys.stderr)
                     if item.get('faction_name'):
                         all_relationships_from_api.append({'name': item['faction_name'], 'status': 'allied'})
-
-            war_data = relationship_data.get('war', [])
+            
             if isinstance(war_data, list):
                 for item in war_data:
+                    # --- DEBUG ---
+                    print(f"   - Processing War Item: {item.get('faction_name')}", file=sys.stderr)
                     if item.get('faction_name'):
                         all_relationships_from_api.append({'name': item['faction_name'], 'status': 'war'})
             
+            # --- DEBUG ---
+            print(f"4. Total relationships to process: {len(all_relationships_from_api)}", file=sys.stderr)
+
             for rel in all_relationships_from_api:
                 if rel['name'] == faction_name:
-                    continue # Skip the user's own faction
+                    # --- DEBUG ---
+                    print(f"   - Skipping self-relationship for '{faction_name}'", file=sys.stderr)
+                    continue
 
                 cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (rel['name'],))
                 other_fac_row = cursor.fetchone()
@@ -186,6 +207,11 @@ def sync_data():
                     cursor.execute(f"INSERT INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES ({param}, {param}, {param}) ON CONFLICT DO NOTHING", (fac_a, fac_b, rel['status']))
                 else:
                     cursor.execute("INSERT OR IGNORE INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES (?, ?, ?)", (fac_a, fac_b, rel['status']))
+        else:
+            # --- DEBUG ---
+            print("1. No relationship data found from API.", file=sys.stderr)
+        
+        print("--- END DEBUG ---", file=sys.stderr)
         # --- End of relationship sync ---
 
         current_system_data = fetch_api_data(CURRENT_SYSTEM_API_URL, api_key)
@@ -196,6 +222,7 @@ def sync_data():
         if not any([current_system_data, systems_data, wormholes_data, structures_data]):
              return jsonify({'message': 'Failed to fetch any data from game API.'}), 500
 
+        # ... (rest of the sync logic is unchanged) ...
         all_systems = {}
         if current_system_data and 'system' in current_system_data:
             for sys_id, sys_info in current_system_data['system'].items(): all_systems[int(sys_id)] = {'system_id': int(sys_id), 'system_name': sys_info['system_name'], 'system_position': sys_info['system_position']}
@@ -206,12 +233,10 @@ def sync_data():
             for wh in stable_wormholes:
                 if wh['from_system_id'] not in all_systems: all_systems[wh['from_system_id']] = {'system_id': wh['from_system_id'], 'system_name': wh['from_system_name'], 'system_position': wh['from_system_position']}
                 if wh['to_system_id'] not in all_systems: all_systems[wh['to_system_id']] = {'system_id': wh['to_system_id'], 'system_name': wh['to_system_name'], 'system_position': wh['to_system_position']}
-        
         if all_systems:
             systems_to_insert = [(s['system_id'], s.get('system_name') or f"System {s['system_id']}", *get_spiral_coords(s.get('system_position')), s.get('system_position')) for s in all_systems.values()]
             if pg_compat: cursor.executemany(f'INSERT INTO systems (id, name, x, y, position) VALUES ({param}, {param}, {param}, {param}, {param}) ON CONFLICT(id) DO NOTHING', systems_to_insert)
             else: cursor.executemany('INSERT OR IGNORE INTO systems (id, name, x, y, position) VALUES (?, ?, ?, ?, ?)', systems_to_insert)
-
             if structures_data and current_system_data and 'system' in current_system_data:
                 current_system_id = int(list(current_system_data['system'].keys())[0]); max_catapult_radius = 0
                 if isinstance(structures_data, dict):
@@ -220,13 +245,11 @@ def sync_data():
                             current_radius = structure.get("quantity", 0)
                             if current_radius > max_catapult_radius: max_catapult_radius = current_radius
                 cursor.execute(f"UPDATE systems SET catapult_radius = {param} WHERE id = {param}", (max_catapult_radius, current_system_id))
-
             if current_system_data and 'system' in current_system_data:
                 current_sys_details = list(current_system_data['system'].values())[0]
                 current_sys_id = int(list(current_system_data['system'].keys())[0])
                 owner_faction_name = current_sys_details.get('system_faction_name')
                 owner_db_id = None
-
                 if owner_faction_name:
                     cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (owner_faction_name,))
                     owner_row = cursor.fetchone()
@@ -238,13 +261,10 @@ def sync_data():
                             owner_db_id = cursor.fetchone()['id']
                         else:
                             cursor.execute("INSERT INTO factions (name) VALUES (?)", (owner_faction_name,)); owner_db_id = cursor.lastrowid
-                
                 cursor.execute(f"UPDATE systems SET owner_faction_id = {param} WHERE id = {param}", (owner_db_id, current_sys_id))
-
             faction_systems_to_link = [(faction_id, sys_id) for sys_id in all_systems.keys()]
             if pg_compat: cursor.executemany(f'INSERT INTO faction_discovered_systems (faction_id, system_id) VALUES ({param}, {param}) ON CONFLICT (faction_id, system_id) DO NOTHING', faction_systems_to_link)
             else: cursor.executemany('INSERT OR IGNORE INTO faction_discovered_systems (faction_id, system_id) VALUES (?, ?)', faction_systems_to_link)
-            
             if wormholes_data and 'stable' in wormholes_data:
                 stable_wormholes = wormholes_data['stable'].values() if isinstance(wormholes_data['stable'], dict) else wormholes_data['stable']
                 wormholes_to_insert = [(min(wh['from_system_id'], wh['to_system_id']), max(wh['from_system_id'], wh['to_system_id'])) for wh in stable_wormholes]
