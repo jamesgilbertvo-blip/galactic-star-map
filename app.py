@@ -31,7 +31,7 @@ WORMHOLE_API_URL = "https://play.textspaced.com/api/lookup/nearby/wormholes/"
 STRUCTURES_API_URL = "https://play.textspaced.com/api/system/structures/"
 CURRENT_SYSTEM_API_URL = "https://play.textspaced.com/api/system/"
 FACTION_API_URL = "https://play.textspaced.com/api/faction/info/"
-RELATIONSHIPS_API_URL = "https://play.textspaced.com/api/faction/karma/all" # <-- New Endpoint
+RELATIONSHIPS_API_URL = "https://play.textspaced.com/api/faction/karma/all"
 
 
 # --- DATABASE CONNECTION & SETUP ---
@@ -51,7 +51,7 @@ def setup_database_if_needed():
         cursor.execute("SELECT id FROM users LIMIT 1")
     except (sqlite3.OperationalError, psycopg2.errors.UndefinedTable):
         print("Database tables not found. Creating schema from scratch...")
-        conn.rollback() # Rollback the failed SELECT
+        conn.rollback()
         
         user_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
         faction_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
@@ -146,26 +146,25 @@ def sync_data():
         if user['faction_id'] != faction_id:
             cursor.execute(f"UPDATE users SET faction_id = {param} WHERE id = {param}", (faction_id, user_id)); session['faction_id'] = faction_id
         
-        # --- NEW: Sync faction relationships ---
         relationship_data = fetch_api_data(RELATIONSHIPS_API_URL, api_key)
         if relationship_data:
-            # Clear old relationships for this faction
             cursor.execute(f"DELETE FROM faction_relationships WHERE faction_a_id = {param} OR faction_b_id = {param}", (faction_id, faction_id))
-            
             relationships_to_add = []
             
-            # Process alliances
             if 'alliance' in relationship_data and relationship_data['alliance']:
                 for item in relationship_data['alliance'].values():
-                    relationships_to_add.append({'name': item['faction_name'], 'status': 'allied'})
+                    # --- FIX IS HERE ---
+                    # Only process factions that are NOT the user's own faction
+                    if item['faction_name'] != faction_name:
+                        relationships_to_add.append({'name': item['faction_name'], 'status': 'allied'})
 
-            # Process wars
             if 'war' in relationship_data and relationship_data['war']:
                 for item in relationship_data['war'].values():
-                    relationships_to_add.append({'name': item['faction_name'], 'status': 'war'})
+                    # --- FIX IS HERE ---
+                    if item['faction_name'] != faction_name:
+                        relationships_to_add.append({'name': item['faction_name'], 'status': 'war'})
             
             for rel in relationships_to_add:
-                # Find or create the other faction in our DB
                 cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (rel['name'],))
                 other_fac_row = cursor.fetchone()
                 if other_fac_row:
@@ -176,16 +175,13 @@ def sync_data():
                     else:
                         cursor.execute("INSERT INTO factions (name) VALUES (?)", (rel['name'],)); other_fac_id = cursor.lastrowid
                 
-                # Insert the relationship, ensuring order for the primary key
                 fac_a = min(faction_id, other_fac_id)
                 fac_b = max(faction_id, other_fac_id)
-                if fac_a != fac_b: # Can't have a relationship with oneself
+                if fac_a != fac_b:
                     if pg_compat:
                         cursor.execute(f"INSERT INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES ({param}, {param}, {param}) ON CONFLICT DO NOTHING", (fac_a, fac_b, rel['status']))
                     else:
                         cursor.execute("INSERT OR IGNORE INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES (?, ?, ?)", (fac_a, fac_b, rel['status']))
-
-        # --- End of new relationship sync ---
 
         current_system_data = fetch_api_data(CURRENT_SYSTEM_API_URL, api_key)
         systems_data = fetch_api_data(SYSTEMS_API_URL, api_key)
@@ -258,6 +254,7 @@ def sync_data():
     finally:
         if conn: conn.close()
         
+# ... (The rest of the file is unchanged) ...
 @app.route('/register', methods=['POST'])
 def register():
     data = request.get_json(); username, password, api_key = data.get('username'), data.get('password'), data.get('api_key')
