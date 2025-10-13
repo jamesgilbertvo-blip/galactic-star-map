@@ -149,23 +149,27 @@ def sync_data():
         relationship_data = fetch_api_data(RELATIONSHIPS_API_URL, api_key)
         if relationship_data:
             cursor.execute(f"DELETE FROM faction_relationships WHERE faction_a_id = {param} OR faction_b_id = {param}", (faction_id, faction_id))
-            relationships_to_add = []
             
             # --- CORRECTED LOGIC ---
-            if 'alliance' in relationship_data and isinstance(relationship_data['alliance'], dict):
-                for item in relationship_data['alliance'].values():
-                    if item.get('faction_name'):
-                        relationships_to_add.append({'name': item['faction_name'], 'status': 'allied'})
-
-            if 'war' in relationship_data and isinstance(relationship_data['war'], list):
-                for item in relationship_data['war']:
-                    if item.get('faction_name'):
-                        relationships_to_add.append({'name': item['faction_name'], 'status': 'war'})
+            alliance_data = relationship_data.get('alliance', {})
+            war_data = relationship_data.get('war', [])
             
-            for rel in relationships_to_add:
-                # This check happens here now, before the DB lookup
+            # This unified list will hold all relationships to be processed
+            all_relationships_from_api = []
+
+            if isinstance(alliance_data, dict):
+                for item in alliance_data.values():
+                    if item.get('faction_name'):
+                        all_relationships_from_api.append({'name': item['faction_name'], 'status': 'allied'})
+            
+            if isinstance(war_data, list):
+                for item in war_data:
+                    if item.get('faction_name'):
+                        all_relationships_from_api.append({'name': item['faction_name'], 'status': 'war'})
+
+            for rel in all_relationships_from_api:
                 if rel['name'] == faction_name:
-                    continue
+                    continue # Skip the user's own faction
 
                 cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (rel['name'],))
                 other_fac_row = cursor.fetchone()
@@ -184,6 +188,7 @@ def sync_data():
                     cursor.execute(f"INSERT INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES ({param}, {param}, {param}) ON CONFLICT DO NOTHING", (fac_a, fac_b, rel['status']))
                 else:
                     cursor.execute("INSERT OR IGNORE INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES (?, ?, ?)", (fac_a, fac_b, rel['status']))
+        # --- End of relationship sync ---
 
         current_system_data = fetch_api_data(CURRENT_SYSTEM_API_URL, api_key)
         systems_data = fetch_api_data(SYSTEMS_API_URL, api_key)
