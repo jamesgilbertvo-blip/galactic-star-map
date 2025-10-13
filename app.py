@@ -147,24 +147,34 @@ def sync_data():
             cursor.execute(f"UPDATE users SET faction_id = {param} WHERE id = {param}", (faction_id, user_id)); session['faction_id'] = faction_id
         
         relationship_data = fetch_api_data(RELATIONSHIPS_API_URL, api_key)
+        
+        # --- NEW DEBUG LOGS ---
+        print("\n--- RELATIONSHIP SYNC DEBUG ---", file=sys.stderr)
+        print(f"Syncing for faction: '{faction_name}' (DB ID: {faction_id})", file=sys.stderr)
+        
         if relationship_data:
             cursor.execute(f"DELETE FROM faction_relationships WHERE faction_a_id = {param} OR faction_b_id = {param}", (faction_id, faction_id))
+            print("1. Cleared old relationships from DB.", file=sys.stderr)
             
-            # --- FINAL CORRECTED LOGIC ---
             all_relationships_from_api = []
             
             alliance_data = relationship_data.get('alliance', {})
             war_data = relationship_data.get('war', [])
             
+            print(f"2. RAW ALLIANCE DATA: {alliance_data}", file=sys.stderr)
+            print(f"3. RAW WAR DATA: {war_data}", file=sys.stderr)
+
             if isinstance(alliance_data, dict):
                 for item in alliance_data.values():
                     if item.get('faction_name'):
                         all_relationships_from_api.append({'name': item['faction_name'], 'status': 'allied'})
-
+            
             if isinstance(war_data, list):
                 for item in war_data:
                     if item.get('faction_name'):
                         all_relationships_from_api.append({'name': item['faction_name'], 'status': 'war'})
+            
+            print(f"4. Total relationships prepared for DB: {len(all_relationships_from_api)}", file=sys.stderr)
             
             for rel in all_relationships_from_api:
                 if rel['name'] == faction_name:
@@ -187,9 +197,16 @@ def sync_data():
                     cursor.execute(f"INSERT INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES ({param}, {param}, {param}) ON CONFLICT DO NOTHING", (fac_a, fac_b, rel['status']))
                 else:
                     cursor.execute("INSERT OR IGNORE INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES (?, ?, ?)", (fac_a, fac_b, rel['status']))
+        else:
+            print("1. No relationship data found from API.", file=sys.stderr)
+
+        print("--- END DEBUG ---\n", file=sys.stderr)
         # --- End of relationship sync ---
 
         current_system_data = fetch_api_data(CURRENT_SYSTEM_API_URL, api_key)
+        # ... (rest of sync logic is unchanged) ...
+        # ... I am providing the full file below to ensure completeness.
+        
         systems_data = fetch_api_data(SYSTEMS_API_URL, api_key)
         wormholes_data = fetch_api_data(WORMHOLE_API_URL, api_key)
         structures_data = fetch_api_data(STRUCTURES_API_URL, api_key)
@@ -207,7 +224,6 @@ def sync_data():
             for wh in stable_wormholes:
                 if wh['from_system_id'] not in all_systems: all_systems[wh['from_system_id']] = {'system_id': wh['from_system_id'], 'system_name': wh['from_system_name'], 'system_position': wh['from_system_position']}
                 if wh['to_system_id'] not in all_systems: all_systems[wh['to_system_id']] = {'system_id': wh['to_system_id'], 'system_name': wh['to_system_name'], 'system_position': wh['to_system_position']}
-        
         if all_systems:
             systems_to_insert = [(s['system_id'], s.get('system_name') or f"System {s['system_id']}", *get_spiral_coords(s.get('system_position')), s.get('system_position')) for s in all_systems.values()]
             if pg_compat: cursor.executemany(f'INSERT INTO systems (id, name, x, y, position) VALUES ({param}, {param}, {param}, {param}, {param}) ON CONFLICT(id) DO NOTHING', systems_to_insert)
@@ -260,7 +276,6 @@ def sync_data():
     finally:
         if conn: conn.close()
         
-# ... (The rest of the file is unchanged) ...
 @app.route('/register', methods=['POST'])
 def register():
     data = request.get_json(); username, password, api_key = data.get('username'), data.get('password'), data.get('api_key')
