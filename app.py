@@ -9,7 +9,6 @@ import requests
 import sys
 import heapq
 from functools import wraps
-from urllib.parse import urlparse
 from cryptography.fernet import Fernet
 
 # --- CONFIGURATION ---
@@ -32,7 +31,7 @@ WORMHOLE_API_URL = "https://play.textspaced.com/api/lookup/nearby/wormholes/"
 STRUCTURES_API_URL = "https://play.textspaced.com/api/system/structures/"
 CURRENT_SYSTEM_API_URL = "https://play.textspaced.com/api/system/"
 FACTION_API_URL = "https://play.textspaced.com/api/faction/info/"
-ALLIANCES_API_URL = "https://api.textspaced.com/factions/"
+RELATIONSHIPS_API_URL = "https://play.textspaced.com/api/faction/karma/all" # <-- New Endpoint
 
 
 # --- DATABASE CONNECTION & SETUP ---
@@ -72,7 +71,6 @@ def setup_database_if_needed():
         
         print("Core tables created.")
     
-    # Always check for new tables/columns to support non-destructive updates
     try:
         cursor.execute(f'''
         CREATE TABLE IF NOT EXISTS faction_relationships (
@@ -148,6 +146,47 @@ def sync_data():
         if user['faction_id'] != faction_id:
             cursor.execute(f"UPDATE users SET faction_id = {param} WHERE id = {param}", (faction_id, user_id)); session['faction_id'] = faction_id
         
+        # --- NEW: Sync faction relationships ---
+        relationship_data = fetch_api_data(RELATIONSHIPS_API_URL, api_key)
+        if relationship_data:
+            # Clear old relationships for this faction
+            cursor.execute(f"DELETE FROM faction_relationships WHERE faction_a_id = {param} OR faction_b_id = {param}", (faction_id, faction_id))
+            
+            relationships_to_add = []
+            
+            # Process alliances
+            if 'alliance' in relationship_data and relationship_data['alliance']:
+                for item in relationship_data['alliance'].values():
+                    relationships_to_add.append({'name': item['faction_name'], 'status': 'allied'})
+
+            # Process wars
+            if 'war' in relationship_data and relationship_data['war']:
+                for item in relationship_data['war'].values():
+                    relationships_to_add.append({'name': item['faction_name'], 'status': 'war'})
+            
+            for rel in relationships_to_add:
+                # Find or create the other faction in our DB
+                cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (rel['name'],))
+                other_fac_row = cursor.fetchone()
+                if other_fac_row:
+                    other_fac_id = other_fac_row['id']
+                else:
+                    if pg_compat:
+                        cursor.execute(f"INSERT INTO factions (name) VALUES ({param}) RETURNING id", (rel['name'],)); other_fac_id = cursor.fetchone()['id']
+                    else:
+                        cursor.execute("INSERT INTO factions (name) VALUES (?)", (rel['name'],)); other_fac_id = cursor.lastrowid
+                
+                # Insert the relationship, ensuring order for the primary key
+                fac_a = min(faction_id, other_fac_id)
+                fac_b = max(faction_id, other_fac_id)
+                if fac_a != fac_b: # Can't have a relationship with oneself
+                    if pg_compat:
+                        cursor.execute(f"INSERT INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES ({param}, {param}, {param}) ON CONFLICT DO NOTHING", (fac_a, fac_b, rel['status']))
+                    else:
+                        cursor.execute("INSERT OR IGNORE INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES (?, ?, ?)", (fac_a, fac_b, rel['status']))
+
+        # --- End of new relationship sync ---
+
         current_system_data = fetch_api_data(CURRENT_SYSTEM_API_URL, api_key)
         systems_data = fetch_api_data(SYSTEMS_API_URL, api_key)
         wormholes_data = fetch_api_data(WORMHOLE_API_URL, api_key)
@@ -246,14 +285,8 @@ def register():
             cursor.execute("INSERT INTO users (username, password, api_key, faction_id, is_admin, is_developer) VALUES (?, ?, ?, ?, ?, ?)", (username, password, encrypted_api_key, faction_id, is_admin_flag, is_developer_account)); user_id = cursor.lastrowid
         
         conn.commit(); 
-        session['user_id'] = user_id
-        session['username'] = username
-        session['faction_id'] = faction_id
-        session['is_admin'] = is_admin_flag
-        session['is_developer'] = is_developer_account
+        session['user_id'] = user_id; session['username'] = username; session['faction_id'] = faction_id; session['is_admin'] = is_admin_flag; session['is_developer'] = is_developer_account
         
-        # --- FIX IS HERE ---
-        # Return all necessary user data to the frontend
         return jsonify({
             'message': 'Registration successful',
             'username': username,
@@ -263,8 +296,6 @@ def register():
     except (sqlite3.IntegrityError, psycopg2.IntegrityError): return jsonify({'message': 'Username already exists.'}), 409
     finally: conn.close()
 
-# ... (The rest of the file is identical to the one I provided in the previous message, so I'm omitting it for brevity) ...
-
 @app.route('/login', methods=['POST'])
 def login():
     data = request.get_json(); username, password = data.get('username'), data.get('password')
@@ -273,21 +304,26 @@ def login():
         session['user_id'], session['username'], session['faction_id'], session['is_admin'], session['is_developer'] = user['id'], user['username'], user['faction_id'], user['is_admin'], user.get('is_developer', False)
         return jsonify({'message': 'Login successful', 'username': user['username'], 'is_admin': user['is_admin'], 'is_developer': user.get('is_developer', False)})
     return jsonify({'message': 'Invalid username or password'}), 401
+
 @app.route('/')
 def serve_index(): return send_from_directory(STATIC_DIR, 'index.html')
+
 @app.route('/<path:filename>')
-def serve_static_files(filename): return send_from_directory(STATIC_DIR, filename)
-@app.route('/guide.html')
-def serve_guide(): return send_from_directory(STATIC_DIR, 'guide.html')
+def serve_static_files(filename):
+    return send_from_directory(STATIC_DIR, filename)
+
 @app.route('/admin')
 @admin_required
 def serve_admin_panel(): return send_from_directory(STATIC_DIR, 'admin.html')
+
 @app.route('/logout', methods=['POST'])
 def logout(): session.clear(); return jsonify({'message': 'Logout successful'})
+
 @app.route('/status')
 def status():
     if 'user_id' in session: return jsonify({'logged_in': True, 'username': session['username'], 'is_admin': session.get('is_admin', False), 'is_developer': session.get('is_developer', False)})
     return jsonify({'logged_in': False})
+
 @app.route('/api/profile', methods=['GET', 'POST'])
 def profile():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
@@ -453,13 +489,11 @@ def calculate_path():
             sublight_dist = abs(current_sys['position'] - neighbor_sys['position']); cost, method = sublight_dist, 'sublight'
             id_pair = tuple(sorted((current_id, neighbor_id)))
             
-            # Catapult check first due to stricter rules
             if current_sys.get('radius', 0) > 0 and abs(current_sys['position'] - neighbor_sys['position']) <= current_sys['radius']:
                 owner = current_sys.get('owner')
                 is_allowed = (owner is None) or (owner == user_faction_id) or (relationships.get(owner) == 'allied')
                 if is_allowed: cost, method = 0, 'catapult'
             
-            # Wormhole check (can be overridden by catapult if path is better)
             if id_pair in wormhole_pairs:
                 owner_a = current_sys.get('owner'); owner_b = neighbor_sys.get('owner')
                 is_at_war = (relationships.get(owner_a) == 'war') or (relationships.get(owner_b) == 'war')
