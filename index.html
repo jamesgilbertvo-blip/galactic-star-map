@@ -4,20 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Galactic Star Map</title>
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
-    <link rel="manifest" href="/site.webmanifest">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { background-color: #111827; color: #d1d5db; font-family: 'Inter', sans-serif; }
-        canvas { cursor: grab; background-color: #1f2937; border-radius: 0.5rem; }
+        /* Add touch-action: none to prevent default browser gestures like scrolling */
+        canvas { touch-action: none; cursor: grab; background-color: #1f2937; border-radius: 0.5rem; }
         canvas:active { cursor: grabbing; }
         .hidden { display: none; }
         input:focus {
-            box-shadow: 0 0 0 2px #4f46e5; /* Indigo focus ring */
-            }
-        /* Add these new styles */
+            box-shadow: 0 0 0 2px #4f46e5;
+        }
         .logo-container {
             position: relative;
             display: flex;
@@ -25,26 +21,21 @@
             align-items: center;
             margin-bottom: 1rem;
         }
-
         .logo-container img {
             width: 100px;
             height: 100px;
-            z-index: 1; /* Ensure logo is in front of the glow */
+            z-index: 1;
             animation: float 6s ease-in-out infinite;
         }
-
-        /* The background glow effect */
         .logo-container::before {
             content: '';
             position: absolute;
             width: 200px;
             height: 200px;
-            background: radial-gradient(circle, rgba(0, 0, 0, 1), transparent 70%);
+            background: radial-gradient(circle, rgba(56, 189, 248, 0.15), transparent 70%);
             border-radius: 50%;
             z-index: 0;
         }
-        
-        /* The floating animation keyframes */
         @keyframes float {
             0% { transform: translateY(0px); }
             50% { transform: translateY(-10px); }
@@ -52,13 +43,16 @@
         }
     </style>
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+    <link rel="manifest" href="/site.webmanifest">
 </head>
 <body class="h-screen antialiased">
 
     <div id="login-view" class="flex items-center justify-center h-full">
         <div class="w-full max-w-md p-8 space-y-8 bg-gray-900 rounded-lg shadow-lg">
-            <div class="logo-container">
-               <img src="/logo.png" alt="Galactic Star Map Logo"></div>
+            <div class="logo-container"><img src="/logo.png" alt="Galactic Star Map Logo"></div>
             <div><h2 class="text-3xl font-extrabold text-center text-white">Sign In</h2><p class="mt-2 text-sm text-center text-gray-400">to view your star map</p></div>
             <form id="login-form" class="mt-8 space-y-6">
                 <div class="rounded-md shadow-sm -space-y-px"><input id="username" name="username" type="text" required class="relative block w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 rounded-t-md placeholder-gray-400 focus:outline-none focus:ring-indigo-500" placeholder="Username"><input id="password" name="password" type="password" required class="relative block w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 rounded-b-md placeholder-gray-400 focus:outline-none focus:ring-indigo-500" placeholder="Password"></div>
@@ -73,8 +67,7 @@
     </div>
     <div id="register-view" class="hidden flex items-center justify-center h-full">
         <div class="w-full max-w-md p-8 space-y-8 bg-gray-900 rounded-lg shadow-lg">
-            <div class="logo-container">
-               <img src="/logo.png" alt="Galactic Star Map Logo"></div>
+            <div class="logo-container"><img src="/logo.png" alt="Galactic Star Map Logo"></div>
             <div><h2 class="text-3xl font-extrabold text-center text-white">Create Account</h2><p class="mt-2 text-sm text-center text-gray-400">to start building your map</p></div>
             <form id="register-form" class="mt-8 space-y-6">
                 <div class="rounded-md shadow-sm -space-y-px">
@@ -136,7 +129,7 @@
                         <input id="toggle-unclaimed-names" type="checkbox" class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
                         <label for="toggle-unclaimed-names" class="ml-2 block text-sm text-gray-300">Show Unclaimed Names</label>
                     </div>
-                    <p class="text-xs text-gray-500">Click a system to highlight its range. Shift+Click to toggle.</p>
+                    <p class="text-xs text-gray-500">Click a system to highlight its range. Long-press to toggle.</p>
                     <button id="reset-view-button" class="mt-2 w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-md text-sm">Reset View</button>
                 </div>
             </div>
@@ -154,6 +147,8 @@
         let hoveredSystem = null;
         let showUnclaimedNames = false;
         let highlightedCatapultSystemId = null;
+        let longPressTimer; let initialTouchDistance = null;
+
         const dom = { loginView: document.getElementById('login-view'), mapView: document.getElementById('map-view'), registerView: document.getElementById('register-view'), loginForm: document.getElementById('login-form'), registerForm: document.getElementById('register-form'), profileView: document.getElementById('profile-view'), canvas: document.getElementById('map-canvas'), ctx: document.getElementById('map-canvas').getContext('2d'), loginError: document.getElementById('login-error'), logoutButton: document.getElementById('logout-button'), welcomeMessage: document.getElementById('welcome-message'), syncContainer: document.getElementById('sync-container'), syncButton: document.getElementById('sync-button'), syncStatus: document.getElementById('sync-status'), routeForm: document.getElementById('route-form'), startSystemInput: document.getElementById('start-system-input'), endSystemInput: document.getElementById('end-system-input'), systemDataList: document.getElementById('system-list'), routeDetailsContainer: document.getElementById('route-details'), profileButton: document.getElementById('profile-button'), closeProfileButton: document.getElementById('close-profile-button'), profileForm: document.getElementById('profile-form'), apiKeyInput: document.getElementById('api-key-input'), newPasswordInput: document.getElementById('new-password-input'), profileStatus: document.getElementById('profile-status'), registerError: document.getElementById('register-error'), showRegisterViewButton: document.getElementById('show-register-view-button'), showLoginViewButton: document.getElementById('show-login-view-button'), toggleAllCatapults: document.getElementById('toggle-all-catapults'), userControls: document.getElementById('user-controls'), resetViewButton: document.getElementById('reset-view-button'), toggleUnclaimedNames: document.getElementById('toggle-unclaimed-names') };
 
         const apiFetch = (url, options = {}) => { options.credentials = 'include'; return fetch(url, options); };
@@ -182,45 +177,30 @@
 
             if (!isNewRegistration) {
                 const savedView = localStorage.getItem('mapViewTransform');
-                if (savedView) { 
-                    viewTransform = JSON.parse(savedView); 
-                    fetchMapData(false); 
-                } else { 
-                    fetchMapData(true); 
-                }
+                if (savedView) { viewTransform = JSON.parse(savedView); fetchMapData(false); } 
+                else { fetchMapData(true); }
             } else {
                 drawMap();
             }
         }
-
         function populateDataList() {
             dom.systemDataList.innerHTML = '';
             const options = new Set();
             Object.values(systems).forEach(s => {
                 options.add(s.name);
-                if (s.position) {
-                    options.add(`#${s.position}`);
-                }
+                if (s.position) { options.add(`#${s.position}`); }
             });
-            Array.from(options).sort().forEach(val => {
-                const o = document.createElement('option');
-                o.value = val;
-                dom.systemDataList.appendChild(o);
-            });
+            Array.from(options).sort().forEach(val => { const o = document.createElement('option'); o.value = val; dom.systemDataList.appendChild(o); });
         }
-        
         function displayPathResults(result) {
             dom.routeDetailsContainer.innerHTML = '';
             calculatedPathNodes = result.path || [];
-
             const allNodes = {};
             calculatedPathNodes.forEach(p => allNodes[p.id] = p);
-
             const startName = dom.startSystemInput.value;
             const endName = dom.endSystemInput.value;
             dom.startSystemInput.value = '';
             dom.endSystemInput.value = '';
-            
             if (result.simple_path && result.simple_path.length > 0 && result.distance != null) {
                 let html = `<div class="flex justify-between items-center"><h2 class="text-lg font-semibold text-white">Route: ${startName} to ${endName}</h2><button id="clear-route-button" class="text-sm text-gray-400 hover:text-white focus:outline-none">&times; Clear</button></div><p class="text-sm text-gray-400">Total Distance: ${result.distance.toFixed(2)}</p><ol class="mt-2 space-y-2 text-sm">`;
                 html += `<li class="text-gray-300">1. Start at: <span class="font-semibold text-white">${allNodes[result.simple_path[0].from_id]?.name || 'Unknown'}</span></li>`;
@@ -242,9 +222,7 @@
             ctx.save();
             ctx.translate(viewTransform.translateX, viewTransform.translateY);
             ctx.scale(viewTransform.scale, viewTransform.scale);
-
             if(Object.keys(systems).length > 0){ let maxPos=Math.max(...Object.values(systems).filter(s => s.position).map(s=>s.position)); if(maxPos>0){ ctx.strokeStyle='rgba(75,85,99,0.2)';ctx.lineWidth=1/viewTransform.scale;ctx.beginPath();const s=1;ctx.moveTo(0,0);for(let p=s;p<=maxPos*1.1;p+=s)ctx.lineTo(getSpiralPoint(p).x,getSpiralPoint(p).y);ctx.stroke();}}
-            
             Object.values(systems).forEach(sys => { 
                 if (typeof sys.position !== 'number' || !sys.catapult_radius || sys.catapult_radius <= 0) return;
                 const isToggled = toggledCatapultIds.has(String(sys.id));
@@ -259,7 +237,6 @@
                     ctx.lineTo(getSpiralPoint(endPos).x, getSpiralPoint(endPos).y); ctx.stroke();
                 }
             });
-
             ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)'; ctx.lineWidth = 1 / viewTransform.scale; ctx.setLineDash([5 / viewTransform.scale, 5 / viewTransform.scale]);
             wormholes.forEach(wh => { const sA=systems[wh[0]], sB=systems[wh[1]]; if (sA && sB) { ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } });
             ctx.setLineDash([]);
@@ -282,6 +259,7 @@
                 }
             }
             
+            // Pass 1: Draw all system nodes
             Object.values(systems).forEach(sys => {
                 if (typeof sys.x !== 'number' || typeof sys.y !== 'number') { console.error('Skipping rendering of malformed system object:', sys); return; }
                 const isOnPath = calculatedPathIds.has(String(sys.id));
@@ -290,18 +268,9 @@
                 ctx.beginPath();
                 ctx.arc(sys.x, sys.y, (isOnPath || isHovered ? 6 : 4) / viewTransform.scale, 0, Math.PI * 2);
                 ctx.fill();
-                let labelText = sys.name;
-                if (sys.name.startsWith("System ") && typeof sys.position === 'number') { labelText = `#${sys.position}`; }
-                const isDefaultName = labelText.startsWith("#");
-                let shouldShowLabel = (isOnPath || isHovered || viewTransform.scale > 0.8);
-                if (isDefaultName && !showUnclaimedNames && !isOnPath && !isHovered) { shouldShowLabel = false; }
-                if (shouldShowLabel) {
-                    ctx.fillStyle = (isOnPath || isHovered) ? '#ffffff' : '#e5e7eb';
-                    ctx.font = `${(isOnPath || isHovered ? 12 : 10) / viewTransform.scale}px Inter`;
-                    ctx.textAlign = 'center';
-                    ctx.fillText(labelText, sys.x, sys.y - ((isOnPath || isHovered ? 10 : 8) / viewTransform.scale));
-                }
             });
+
+            // Draw virtual nodes
             calculatedPathNodes.forEach(node => {
                 if (node.id.toString().startsWith('virtual')) {
                     const size = 8 / viewTransform.scale;
@@ -311,28 +280,146 @@
                     ctx.moveTo(node.x - size, node.y - size); ctx.lineTo(node.x + size, node.y + size);
                     ctx.moveTo(node.x + size, node.y - size); ctx.lineTo(node.x - size, node.y + size);
                     ctx.stroke();
+                }
+            });
+
+            // Pass 2: Draw all labels on top
+            Object.values(systems).forEach(sys => {
+                if (typeof sys.x !== 'number' || typeof sys.y !== 'number') return;
+                const isOnPath = calculatedPathIds.has(String(sys.id));
+                const isHovered = hoveredSystem && hoveredSystem.id === sys.id;
+                
+                let labelText = sys.name;
+                if (sys.name.startsWith("System ") && typeof sys.position === 'number') { labelText = `#${sys.position}`; }
+                const isDefaultName = labelText.startsWith("#");
+                let shouldShowLabel = (isOnPath || isHovered || viewTransform.scale > 0.8);
+                if (isDefaultName && !showUnclaimedNames && !isOnPath && !isHovered) { shouldShowLabel = false; }
+
+                if (shouldShowLabel) {
+                    ctx.fillStyle = (isOnPath || isHovered) ? '#ffffff' : '#e5e7eb';
+                    ctx.font = `${(isOnPath || isHovered ? 12 : 10) / viewTransform.scale}px Inter`;
+                    ctx.textAlign = 'center';
+                    ctx.fillText(labelText, sys.x, sys.y - ((isOnPath || isHovered ? 10 : 8) / viewTransform.scale));
+                }
+            });
+
+            calculatedPathNodes.forEach(node => {
+                if (node.id.toString().startsWith('virtual')) {
+                    const size = 8 / viewTransform.scale;
                     ctx.fillStyle = '#ffffff';
                     ctx.font = `${12 / viewTransform.scale}px Inter`;
                     ctx.textAlign = 'center';
                     ctx.fillText(node.name, node.x, node.y - (size + 4 / viewTransform.scale));
                 }
             });
+
             ctx.restore();
         }
         function handleToggleAllCatapults(e) { showAllCatapults = e.target.checked; toggledCatapultIds.clear(); drawMap(); }
         function handleToggleUnclaimedNames(e) { showUnclaimedNames = e.target.checked; drawMap(); }
         function handleResetView() { fitMapToView(); drawMap(); }
-        function onMouseDown(e) { isMouseDown = true; isDragging = false; dragStartPos = { x: e.clientX, y: e.clientY }; lastDragPosition = { x: e.clientX, y: e.clientY }; }
-        function onMouseMove(e) { const rect = dom.canvas.getBoundingClientRect(), mouseX = e.clientX - rect.left, mouseY = e.clientY - rect.top, worldX = (mouseX-viewTransform.translateX)/viewTransform.scale, worldY = (mouseY-viewTransform.translateY)/viewTransform.scale; let currentlyHovering = null; for(const system of Object.values(systems)){ if(typeof system.x!=='number'||typeof system.y!=='number')continue; const dx=worldX-system.x,dy=worldY-system.y;if(Math.sqrt(dx*dx+dy*dy)<(10/viewTransform.scale)){currentlyHovering=system;break;}} if (hoveredSystem !== currentlyHovering) { hoveredSystem = currentlyHovering; drawMap(); } let cursorStyle = hoveredSystem ? 'pointer' : 'grab'; if(isMouseDown){if(!isDragging&&(Math.abs(e.clientX-dragStartPos.x)>5||Math.abs(e.clientY-dragStartPos.y)>5)){isDragging=true;}if(isDragging){cursorStyle='grabbing';const dx=e.clientX-lastDragPosition.x,dy=e.clientY-lastDragPosition.y;viewTransform.translateX+=dx;viewTransform.translateY+=dy;lastDragPosition={x:e.clientX,y:e.clientY};drawMap();}}else{ dom.canvas.style.cursor = cursorStyle;}}
-        function onMouseUp(e) {
+
+        function getEventCoordinates(e) {
+            const rect = dom.canvas.getBoundingClientRect();
+            if (e.touches && e.touches.length > 0) {
+                return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+            }
+            return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        }
+
+        function onInteractionStart(e) {
+            isMouseDown = true;
+            isDragging = false;
+            const coords = getEventCoordinates(e);
+            dragStartPos = { x: coords.x, y: coords.y };
+            lastDragPosition = { x: coords.x, y: coords.y };
+            
+            clearTimeout(longPressTimer);
+            longPressTimer = setTimeout(() => {
+                if (!isDragging && hoveredSystem && hoveredSystem.catapult_radius > 0) {
+                    const systemId = String(hoveredSystem.id);
+                    if (toggledCatapultIds.has(systemId)) { toggledCatapultIds.delete(systemId); } 
+                    else { toggledCatapultIds.add(systemId); }
+                    drawMap();
+                }
+            }, 500);
+        }
+
+        function onInteractionMove(e) {
+            e.preventDefault();
+            const coords = getEventCoordinates(e);
+            const worldX = (coords.x - viewTransform.translateX) / viewTransform.scale;
+            const worldY = (coords.y - viewTransform.translateY) / viewTransform.scale;
+            
+            let currentlyHovering = null;
+            for (const system of Object.values(systems)) {
+                if (typeof system.x !== 'number' || typeof system.y !== 'number') continue;
+                const dx = worldX - system.x;
+                const dy = worldY - system.y;
+                if (Math.sqrt(dx * dx + dy * dy) < (10 / viewTransform.scale)) {
+                    currentlyHovering = system;
+                    break;
+                }
+            }
+            if (hoveredSystem !== currentlyHovering) {
+                hoveredSystem = currentlyHovering;
+                drawMap();
+            }
+
+            if (e.touches && e.touches.length === 2) {
+                isDragging = false;
+                const t1 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                const t2 = { x: e.touches[1].clientX, y: e.touches[1].clientY };
+                const dist = Math.hypot(t1.x - t2.x, t1.y - t2.y);
+                if (initialTouchDistance) {
+                    const scaleFactor = dist / initialTouchDistance;
+                    const midX = (t1.x + t2.x) / 2 - dom.canvas.offsetLeft;
+                    const midY = (t1.y + t2.y) / 2 - dom.canvas.offsetTop;
+                    const worldMidX = (midX - viewTransform.translateX) / viewTransform.scale;
+                    const worldMidY = (midY - viewTransform.translateY) / viewTransform.scale;
+                    viewTransform.scale *= scaleFactor;
+                    viewTransform.translateX = midX - worldMidX * viewTransform.scale;
+                    viewTransform.translateY = midY - worldMidY * viewTransform.scale;
+                    drawMap();
+                }
+                initialTouchDistance = dist;
+                return;
+            }
+
+            let cursorStyle = hoveredSystem ? 'pointer' : 'grab';
+            if (isMouseDown) {
+                clearTimeout(longPressTimer);
+                if (!isDragging && (Math.abs(coords.x - dragStartPos.x) > 5 || Math.abs(coords.y - dragStartPos.y) > 5)) {
+                    isDragging = true;
+                }
+                if (isDragging) {
+                    cursorStyle = 'grabbing';
+                    const dx = coords.x - lastDragPosition.x;
+                    const dy = coords.y - lastDragPosition.y;
+                    viewTransform.translateX += dx;
+                    viewTransform.translateY += dy;
+                    lastDragPosition = { x: coords.x, y: coords.y };
+                    drawMap();
+                }
+            } else {
+                dom.canvas.style.cursor = cursorStyle;
+            }
+        }
+        
+        function onInteractionEnd(e) {
+            clearTimeout(longPressTimer);
             if (!isDragging) {
                 if (hoveredSystem) {
-                    if (e.shiftKey && hoveredSystem.catapult_radius > 0) {
-                        const systemId = String(hoveredSystem.id);
-                        if (toggledCatapultIds.has(systemId)) { toggledCatapultIds.delete(systemId); } else { toggledCatapultIds.add(systemId); }
+                    if (e.shiftKey) {
+                         if (hoveredSystem.catapult_radius > 0) {
+                            const systemId = String(hoveredSystem.id);
+                            if (toggledCatapultIds.has(systemId)) { toggledCatapultIds.delete(systemId); } 
+                            else { toggledCatapultIds.add(systemId); }
+                        }
                     } else if (activeRouteInput) {
                         activeRouteInput.value = hoveredSystem.name;
-                        if (activeRouteInput === dom.startSystemInput) { dom.endSystemInput.focus(); } else { dom.routeForm.querySelector('button[type="submit"]').focus(); }
+                        if (activeRouteInput === dom.startSystemInput) { dom.endSystemInput.focus(); } 
+                        else { dom.routeForm.querySelector('button[type="submit"]').focus(); }
                     }
                     highlightedCatapultSystemId = hoveredSystem.id;
                 } else {
@@ -340,9 +427,12 @@
                 }
                 drawMap();
             }
-            isMouseDown = false; isDragging = false;
+            isMouseDown = false;
+            isDragging = false;
+            initialTouchDistance = null;
             dom.canvas.style.cursor = hoveredSystem ? 'pointer' : 'grab';
         }
+
         function setupEventListeners() {
             window.addEventListener('resize', resizeCanvas);
             dom.loginForm.addEventListener('submit', handleLogin);
@@ -362,30 +452,30 @@
                 const startVal = dom.startSystemInput.value.trim();
                 const endVal = dom.endSystemInput.value.trim();
                 const parseInput = (val) => {
-                    if (val.startsWith('#')) {
-                        const pos = parseFloat(val.substring(1));
-                        return !isNaN(pos) ? `pos:${pos}` : null;
-                    }
+                    if (val.startsWith('#')) { const pos = parseFloat(val.substring(1)); return !isNaN(pos) ? `pos:${pos}` : null; }
                     const system = Object.values(systems).find(s => s.name.toLowerCase() === val.toLowerCase() || `#${s.position}` === val);
                     return system ? `sys:${system.id}` : null;
                 };
                 const startId = parseInput(startVal);
                 const endId = parseInput(endVal);
-                if (startId && endId) {
-                    findPath(startId, endId);
-                } else {
-                    dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Could not find one or both locations. Please use a known system name or format coordinates as #123.45</p>`;
-                }
+                if (startId && endId) { findPath(startId, endId); } 
+                else { dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Could not find one or both locations. Please use a known system name or format coordinates as #123.45</p>`; }
             });
             dom.startSystemInput.addEventListener('focus', () => { activeRouteInput = dom.startSystemInput; });
             dom.endSystemInput.addEventListener('focus', () => { activeRouteInput = dom.endSystemInput; });
             document.addEventListener('click', (e) => { if (!dom.routeForm.contains(e.target) && !dom.canvas.contains(e.target)) { activeRouteInput = null; }});
             dom.routeDetailsContainer.addEventListener('click', (e) => { if (e.target && e.target.id === 'clear-route-button') { clearRouteDisplay(); } });
-            dom.canvas.addEventListener('mousedown', onMouseDown);
-            dom.canvas.addEventListener('mousemove', onMouseMove);
-            dom.canvas.addEventListener('mouseup', onMouseUp);
-            dom.canvas.addEventListener('mouseleave', () => { isMouseDown = false; isDragging = false; dom.canvas.style.cursor = 'grab'; });
+
+            dom.canvas.addEventListener('mousedown', onInteractionStart);
+            dom.canvas.addEventListener('mousemove', onInteractionMove);
+            dom.canvas.addEventListener('mouseup', onInteractionEnd);
+            dom.canvas.addEventListener('mouseleave', onInteractionEnd);
             dom.canvas.addEventListener('wheel', (e) => { e.preventDefault(); const s=1.1, mX=e.clientX-dom.canvas.offsetLeft, mY=e.clientY-dom.canvas.offsetTop; const wX=(mX-viewTransform.translateX)/viewTransform.scale, wY=(mY-viewTransform.translateY)/viewTransform.scale; if(e.deltaY<0)viewTransform.scale*=s; else viewTransform.scale/=s; viewTransform.translateX=mX-wX*viewTransform.scale; viewTransform.translateY=mY-wY*viewTransform.scale; drawMap(); localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform)); });
+            
+            dom.canvas.addEventListener('touchstart', onInteractionStart);
+            dom.canvas.addEventListener('touchmove', onInteractionMove);
+            dom.canvas.addEventListener('touchend', onInteractionEnd);
+            dom.canvas.addEventListener('touchcancel', onInteractionEnd);
         }
         
         setupEventListeners();
