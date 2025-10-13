@@ -16,6 +16,39 @@
         .hidden { display: none; }
         input:focus {
             box-shadow: 0 0 0 2px #4f46e5; /* Indigo focus ring */
+            }
+        /* Add these new styles */
+        .logo-container {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .logo-container img {
+            width: 100px;
+            height: 100px;
+            z-index: 1; /* Ensure logo is in front of the glow */
+            animation: float 6s ease-in-out infinite;
+        }
+
+        /* The background glow effect */
+        .logo-container::before {
+            content: '';
+            position: absolute;
+            width: 200px;
+            height: 200px;
+            background: radial-gradient(circle, rgba(56, 189, 248, 0.15), transparent 70%);
+            border-radius: 50%;
+            z-index: 0;
+        }
+        
+        /* The floating animation keyframes */
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+            100% { transform: translateY(0px); }
         }
     </style>
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
@@ -24,6 +57,8 @@
 
     <div id="login-view" class="flex items-center justify-center h-full">
         <div class="w-full max-w-md p-8 space-y-8 bg-gray-900 rounded-lg shadow-lg">
+            <div class="logo-container">
+               <img src="/apple-touch-icon.png" alt="Galactic Star Map Logo"></div>
             <div><h2 class="text-3xl font-extrabold text-center text-white">Sign In</h2><p class="mt-2 text-sm text-center text-gray-400">to view your star map</p></div>
             <form id="login-form" class="mt-8 space-y-6">
                 <div class="rounded-md shadow-sm -space-y-px"><input id="username" name="username" type="text" required class="relative block w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 rounded-t-md placeholder-gray-400 focus:outline-none focus:ring-indigo-500" placeholder="Username"><input id="password" name="password" type="password" required class="relative block w-full px-3 py-2 text-white bg-gray-700 border border-gray-600 rounded-b-md placeholder-gray-400 focus:outline-none focus:ring-indigo-500" placeholder="Password"></div>
@@ -38,6 +73,8 @@
     </div>
     <div id="register-view" class="hidden flex items-center justify-center h-full">
         <div class="w-full max-w-md p-8 space-y-8 bg-gray-900 rounded-lg shadow-lg">
+            <div class="logo-container">
+               <img src="/apple-touch-icon.png" alt="Galactic Star Map Logo"></div>
             <div><h2 class="text-3xl font-extrabold text-center text-white">Create Account</h2><p class="mt-2 text-sm text-center text-gray-400">to start building your map</p></div>
             <form id="register-form" class="mt-8 space-y-6">
                 <div class="rounded-md shadow-sm -space-y-px">
