@@ -31,7 +31,7 @@ WORMHOLE_API_URL = "https://play.textspaced.com/api/lookup/nearby/wormholes/"
 STRUCTURES_API_URL = "https://play.textspaced.com/api/system/structures/"
 CURRENT_SYSTEM_API_URL = "https://play.textspaced.com/api/system/"
 FACTION_API_URL = "https://play.textspaced.com/api/faction/info/"
-RELATIONSHIPS_API_URL = "https://play.textspaced.com/api/faction/karma/all"
+RELATIONSHIPS_API_URL = "https://play.textspaced.com/api/faction/karma/all/"
 
 
 # --- DATABASE CONNECTION & SETUP ---
