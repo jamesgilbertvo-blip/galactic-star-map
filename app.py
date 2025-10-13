@@ -275,6 +275,8 @@ def login():
     return jsonify({'message': 'Invalid username or password'}), 401
 @app.route('/')
 def serve_index(): return send_from_directory(STATIC_DIR, 'index.html')
+@app.route('/<path:filename>')
+def serve_static_files(filename): return send_from_directory(STATIC_DIR, filename)
 @app.route('/guide.html')
 def serve_guide(): return send_from_directory(STATIC_DIR, 'guide.html')
 @app.route('/admin')
