@@ -151,22 +151,20 @@ def sync_data():
             cursor.execute(f"DELETE FROM faction_relationships WHERE faction_a_id = {param} OR faction_b_id = {param}", (faction_id, faction_id))
             
             # --- CORRECTED LOGIC ---
-            alliance_data = relationship_data.get('alliance', {})
-            war_data = relationship_data.get('war', [])
-            
-            # This unified list will hold all relationships to be processed
             all_relationships_from_api = []
-
+            
+            alliance_data = relationship_data.get('alliance', {})
             if isinstance(alliance_data, dict):
                 for item in alliance_data.values():
                     if item.get('faction_name'):
                         all_relationships_from_api.append({'name': item['faction_name'], 'status': 'allied'})
-            
+
+            war_data = relationship_data.get('war', [])
             if isinstance(war_data, list):
                 for item in war_data:
                     if item.get('faction_name'):
                         all_relationships_from_api.append({'name': item['faction_name'], 'status': 'war'})
-
+            
             for rel in all_relationships_from_api:
                 if rel['name'] == faction_name:
                     continue # Skip the user's own faction
