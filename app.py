@@ -150,7 +150,7 @@ def sync_data():
         if relationship_data:
             cursor.execute(f"DELETE FROM faction_relationships WHERE faction_a_id = {param} OR faction_b_id = {param}", (faction_id, faction_id))
             
-            # --- CORRECTED LOGIC ---
+            # --- FINAL CORRECTED LOGIC ---
             all_relationships_from_api = []
             
             alliance_data = relationship_data.get('alliance', {})
