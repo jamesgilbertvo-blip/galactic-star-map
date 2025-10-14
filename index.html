@@ -135,11 +135,8 @@
         </aside>
 
         <main class="relative flex-grow flex items-center justify-center">
-            <button id="menu-button" class="md:hidden absolute top-4 left-4 z-30 p-2 bg-gray-800 text-white rounded-md" aria-controls="side-panel" aria-expanded="false">
+            <button id="menu-button" class="md:hidden absolute top-4 left-4 z-30 p-2 bg-gray-800 text-white rounded-md" title="Toggle Menu" aria-label="Toggle map controls panel" aria-controls="side-panel" aria-expanded="false">
                 <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
-            </button>
-            <button id="center-me-button" class="absolute bottom-4 right-4 z-10 p-2 bg-gray-800 text-white rounded-full shadow-lg" title="Center on latest system">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
             </button>
             <canvas id="map-canvas" class="w-full h-full"></canvas>
         </main>
@@ -171,8 +168,7 @@
             toggleAllCatapults: document.getElementById('toggle-all-catapults'), userControls: document.getElementById('user-controls'), 
             resetViewButton: document.getElementById('reset-view-button'), toggleUnclaimedNames: document.getElementById('toggle-unclaimed-names'),
             sidePanel: document.getElementById('side-panel'),
-            menuButton: document.getElementById('menu-button'),
-            centerMeButton: document.getElementById('center-me-button')
+            menuButton: document.getElementById('menu-button')
         };
 
         const apiFetch = (url, options = {}) => { options.credentials = 'include'; return fetch(url, options); };
@@ -220,10 +216,8 @@
         function displayPathResults(result) {
             dom.routeDetailsContainer.innerHTML = '';
             calculatedPathNodes = result.path || [];
-
             const allNodes = {};
             calculatedPathNodes.forEach(p => allNodes[p.id] = p);
-
             const startName = dom.startSystemInput.value;
             const endName = dom.endSystemInput.value;
             dom.startSystemInput.value = '';
@@ -254,27 +248,6 @@
             drawMap();
         }
 
-        function centerOnMyLocation() {
-            if (Object.keys(systems).length === 0) return;
-            
-            let latestSystem = null;
-            let maxPosition = -Infinity;
-            for (const system of Object.values(systems)) {
-                if (system.position > maxPosition) {
-                    maxPosition = system.position;
-                    latestSystem = system;
-                }
-            }
-
-            if (latestSystem) {
-                viewTransform.scale = 0.8;
-                viewTransform.translateX = (dom.canvas.width / 2) - (latestSystem.x * viewTransform.scale);
-                viewTransform.translateY = (dom.canvas.height / 2) - (latestSystem.y * viewTransform.scale);
-                drawMap();
-                localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform));
-            }
-        }
-        
         function toggleSidePanel() {
             const isExpanded = dom.menuButton.getAttribute('aria-expanded') === 'true';
             dom.sidePanel.classList.toggle('-translate-x-full');
@@ -478,7 +451,13 @@
                             else { toggledCatapultIds.add(systemId); }
                         }
                     } else if (activeRouteInput) {
-                        activeRouteInput.value = hoveredSystem.name;
+                        // FIX #3: Use the correct format when populating the input
+                        if (hoveredSystem.name.startsWith("System ")) {
+                            activeRouteInput.value = `#${hoveredSystem.position}`;
+                        } else {
+                            activeRouteInput.value = hoveredSystem.name;
+                        }
+
                         if (activeRouteInput === dom.startSystemInput) { dom.endSystemInput.focus(); } 
                         else { dom.routeForm.querySelector('button[type="submit"]').focus(); }
                     }
@@ -508,7 +487,6 @@
             dom.toggleAllCatapults.addEventListener('change', handleToggleAllCatapults);
             dom.toggleUnclaimedNames.addEventListener('change', handleToggleUnclaimedNames);
             dom.resetViewButton.addEventListener('click', handleResetView);
-            dom.centerMeButton.addEventListener('click', centerOnMyLocation);
             dom.menuButton.addEventListener('click', toggleSidePanel);
             
             dom.routeForm.addEventListener('submit', (e) => {
@@ -534,8 +512,10 @@
             dom.canvas.addEventListener('mouseup', onInteractionEnd); dom.canvas.addEventListener('mouseleave', onInteractionEnd);
             dom.canvas.addEventListener('wheel', (e) => { e.preventDefault(); const s=1.1, mX=e.clientX-dom.canvas.offsetLeft, mY=e.clientY-dom.canvas.offsetTop; const wX=(mX-viewTransform.translateX)/viewTransform.scale, wY=(mY-viewTransform.translateY)/viewTransform.scale; if(e.deltaY<0)viewTransform.scale*=s; else viewTransform.scale/=s; viewTransform.translateX=mX-wX*viewTransform.scale; viewTransform.translateY=mY-wY*viewTransform.scale; drawMap(); localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform)); });
             
-            dom.canvas.addEventListener('touchstart', onInteractionStart); dom.canvas.addEventListener('touchmove', onInteractionMove);
-            dom.canvas.addEventListener('touchend', onInteractionEnd); dom.canvas.addEventListener('touchcancel', onInteractionEnd);
+            dom.canvas.addEventListener('touchstart', onInteractionStart);
+            dom.canvas.addEventListener('touchmove', onInteractionMove);
+            dom.canvas.addEventListener('touchend', onInteractionEnd);
+            dom.canvas.addEventListener('touchcancel', onInteractionEnd);
         }
         
         setupEventListeners();
