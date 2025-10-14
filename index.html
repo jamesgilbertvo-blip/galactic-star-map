@@ -7,7 +7,6 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { background-color: #111827; color: #d1d5db; font-family: 'Inter', sans-serif; }
-        /* Add touch-action: none to prevent default browser gestures like scrolling */
         canvas { touch-action: none; cursor: grab; background-color: #1f2937; border-radius: 0.5rem; }
         canvas:active { cursor: grabbing; }
         .hidden { display: none; }
@@ -48,7 +47,7 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
     <link rel="manifest" href="/site.webmanifest">
 </head>
-<body class="h-screen antialiased">
+<body class="h-screen antialiased overflow-hidden">
 
     <div id="login-view" class="flex items-center justify-center h-full">
         <div class="w-full max-w-md p-8 space-y-8 bg-gray-900 rounded-lg shadow-lg">
@@ -97,8 +96,8 @@
         </div>
     </div>
 
-    <div id="map-view" class="hidden flex flex-col md:flex-row h-screen">
-        <aside class="w-full md:w-80 lg:w-96 bg-gray-900 p-6 flex-shrink-0 overflow-y-auto">
+    <div id="map-view" class="hidden relative h-screen w-screen overflow-hidden">
+        <aside id="side-panel" class="absolute top-0 left-0 z-20 h-full w-full max-w-sm transform -translate-x-full transition-transform duration-300 ease-in-out md:relative md:max-w-xs md:translate-x-0 lg:max-w-sm bg-gray-900 p-6 flex-shrink-0 overflow-y-auto">
             <div class="space-y-6">
                 <header class="flex items-center justify-between">
                     <div><h1 class="text-2xl font-bold text-white">Galactic Star Map</h1><p id="welcome-message" class="text-sm text-gray-400"></p></div>
@@ -134,7 +133,16 @@
                 </div>
             </div>
         </aside>
-        <main class="flex-grow p-4 flex items-center justify-center"><canvas id="map-canvas" class="w-full h-full"></canvas></main>
+
+        <main class="relative flex-grow flex items-center justify-center">
+            <button id="menu-button" class="md:hidden absolute top-4 left-4 z-30 p-2 bg-gray-800 text-white rounded-md" aria-controls="side-panel" aria-expanded="false">
+                <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
+            </button>
+            <button id="center-me-button" class="absolute bottom-4 right-4 z-10 p-2 bg-gray-800 text-white rounded-full shadow-lg" title="Center on latest system">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            </button>
+            <canvas id="map-canvas" class="w-full h-full"></canvas>
+        </main>
     </div>
 
     <script>
@@ -149,8 +157,26 @@
         let highlightedCatapultSystemId = null;
         let longPressTimer; let initialTouchDistance = null;
 
-        const dom = { loginView: document.getElementById('login-view'), mapView: document.getElementById('map-view'), registerView: document.getElementById('register-view'), loginForm: document.getElementById('login-form'), registerForm: document.getElementById('register-form'), profileView: document.getElementById('profile-view'), canvas: document.getElementById('map-canvas'), ctx: document.getElementById('map-canvas').getContext('2d'), loginError: document.getElementById('login-error'), logoutButton: document.getElementById('logout-button'), welcomeMessage: document.getElementById('welcome-message'), syncContainer: document.getElementById('sync-container'), syncButton: document.getElementById('sync-button'), syncStatus: document.getElementById('sync-status'), routeForm: document.getElementById('route-form'), startSystemInput: document.getElementById('start-system-input'), endSystemInput: document.getElementById('end-system-input'), systemDataList: document.getElementById('system-list'), routeDetailsContainer: document.getElementById('route-details'), profileButton: document.getElementById('profile-button'), closeProfileButton: document.getElementById('close-profile-button'), profileForm: document.getElementById('profile-form'), apiKeyInput: document.getElementById('api-key-input'), newPasswordInput: document.getElementById('new-password-input'), profileStatus: document.getElementById('profile-status'), registerError: document.getElementById('register-error'), showRegisterViewButton: document.getElementById('show-register-view-button'), showLoginViewButton: document.getElementById('show-login-view-button'), toggleAllCatapults: document.getElementById('toggle-all-catapults'), userControls: document.getElementById('user-controls'), resetViewButton: document.getElementById('reset-view-button'), toggleUnclaimedNames: document.getElementById('toggle-unclaimed-names') };
+        const dom = { 
+            loginView: document.getElementById('login-view'), mapView: document.getElementById('map-view'), registerView: document.getElementById('register-view'), 
+            loginForm: document.getElementById('login-form'), registerForm: document.getElementById('register-form'), profileView: document.getElementById('profile-view'), 
+            canvas: document.getElementById('map-canvas'), ctx: document.getElementById('map-canvas').getContext('2d'), loginError: document.getElementById('login-error'), 
+            logoutButton: document.getElementById('logout-button'), welcomeMessage: document.getElementById('welcome-message'), 
+            syncContainer: document.getElementById('sync-container'), syncButton: document.getElementById('sync-button'), syncStatus: document.getElementById('sync-status'), 
+            routeForm: document.getElementById('route-form'), startSystemInput: document.getElementById('start-system-input'), endSystemInput: document.getElementById('end-system-input'), 
+            systemDataList: document.getElementById('system-list'), routeDetailsContainer: document.getElementById('route-details'), 
+            profileButton: document.getElementById('profile-button'), closeProfileButton: document.getElementById('close-profile-button'), profileForm: document.getElementById('profile-form'), 
+            apiKeyInput: document.getElementById('api-key-input'), newPasswordInput: document.getElementById('new-password-input'), profileStatus: document.getElementById('profile-status'), 
+            registerError: document.getElementById('register-error'), showRegisterViewButton: document.getElementById('show-register-view-button'), showLoginViewButton: document.getElementById('show-login-view-button'), 
+            toggleAllCatapults: document.getElementById('toggle-all-catapults'), userControls: document.getElementById('user-controls'), 
+            resetViewButton: document.getElementById('reset-view-button'), toggleUnclaimedNames: document.getElementById('toggle-unclaimed-names'),
+            // NEW DOM elements
+            sidePanel: document.getElementById('side-panel'),
+            menuButton: document.getElementById('menu-button'),
+            centerMeButton: document.getElementById('center-me-button')
+        };
 
+        // API and View Functions (unchanged)
         const apiFetch = (url, options = {}) => { options.credentials = 'include'; return fetch(url, options); };
         const handleLogin = async (e) => { e.preventDefault(); const r=await apiFetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:dom.loginForm.username.value,password:dom.loginForm.password.value})}); const d=await r.json(); if(r.ok)showMapView(d.username, d.is_admin, d.is_developer); else dom.loginError.textContent=d.message||'Login failed.'; };
         const handleRegister = async (e) => { e.preventDefault(); const p={username:dom.registerForm.username.value,password:dom.registerForm.password.value,api_key:dom.registerForm.api_key.value}; const r=await apiFetch('/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); const d=await r.json(); if(r.ok)showMapView(d.username, d.is_admin, d.is_developer, true); else dom.registerError.textContent=d.message||'Registration failed.'; };
@@ -162,7 +188,6 @@
         const handleProfileUpdate = async (e) => { e.preventDefault(); dom.profileStatus.textContent = 'Saving...'; const p={}; if (dom.apiKeyInput.value && dom.apiKeyInput.value !== '(Key is set and encrypted)') p.api_key = dom.apiKeyInput.value; if (dom.newPasswordInput.value) p.password = dom.newPasswordInput.value; const r=await apiFetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); const d=await r.json(); dom.profileStatus.textContent = d.message; setTimeout(closeProfile, 2000); };
         async function fetchMapData(shouldFit = true) { try {const r = await apiFetch('/api/systems'); if (!r.ok) { if (r.status === 401) handleLogout(); return; } const d = await r.json(); systems = d.systems; wormholes = d.wormholes; populateDataList(); if (shouldFit) { fitMapToView(); } drawMap();} catch (e) { console.error("Failed to fetch or draw map data:", e); } }
         async function findPath(startId, endId) { const r = await apiFetch('/api/path', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ start_id: startId, end_id: endId }), }); displayPathResults(await r.json()); }
-
         function showLoginView() { dom.mapView.classList.add('hidden'); dom.registerView.classList.add('hidden'); dom.loginView.classList.remove('hidden'); }
         function showRegisterView() { dom.mapView.classList.add('hidden'); dom.loginView.classList.add('hidden'); dom.registerView.classList.remove('hidden'); }
         function showMapView(username, isAdmin, isDeveloper, isNewRegistration = false) {
@@ -192,24 +217,76 @@
             });
             Array.from(options).sort().forEach(val => { const o = document.createElement('option'); o.value = val; dom.systemDataList.appendChild(o); });
         }
+        
         function displayPathResults(result) {
             dom.routeDetailsContainer.innerHTML = '';
             calculatedPathNodes = result.path || [];
+
             const allNodes = {};
             calculatedPathNodes.forEach(p => allNodes[p.id] = p);
+
             const startName = dom.startSystemInput.value;
             const endName = dom.endSystemInput.value;
             dom.startSystemInput.value = '';
             dom.endSystemInput.value = '';
+            
             if (result.simple_path && result.simple_path.length > 0 && result.distance != null) {
                 let html = `<div class="flex justify-between items-center"><h2 class="text-lg font-semibold text-white">Route: ${startName} to ${endName}</h2><button id="clear-route-button" class="text-sm text-gray-400 hover:text-white focus:outline-none">&times; Clear</button></div><p class="text-sm text-gray-400">Total Distance: ${result.distance.toFixed(2)}</p><ol class="mt-2 space-y-2 text-sm">`;
-                html += `<li class="text-gray-300">1. Start at: <span class="font-semibold text-white">${allNodes[result.simple_path[0].from_id]?.name || 'Unknown'}</span></li>`;
-                result.simple_path.forEach((leg, index) => { const travelMethod = leg.method.charAt(0).toUpperCase() + leg.method.slice(1); let color = 'text-amber-400'; if (leg.method === 'wormhole') color = 'text-red-400'; if (leg.method === 'catapult') color = 'text-lime-400'; html += `<li class="text-gray-300">${index + 2}. Travel via <span class="font-semibold ${color}">${travelMethod}</span> to <span class="font-semibold text-white">${allNodes[leg.to_id]?.name || 'Unknown'}</span></li>`; });
-                html += `</ol>`; dom.routeDetailsContainer.innerHTML = html;
+                
+                const getDisplayName = (node) => {
+                    if (node.name.startsWith("System ")) {
+                        return `#${node.position}`;
+                    }
+                    return node.name;
+                };
+
+                html += `<li class="text-gray-300">1. Start at: <span class="font-semibold text-white">${getDisplayName(allNodes[result.simple_path[0].from_id]) || 'Unknown'}</span></li>`;
+                result.simple_path.forEach((leg, index) => { 
+                    const travelMethod = leg.method.charAt(0).toUpperCase() + leg.method.slice(1); 
+                    let color = 'text-amber-400'; 
+                    if (leg.method === 'wormhole') color = 'text-red-400'; 
+                    if (leg.method === 'catapult') color = 'text-lime-400'; 
+                    html += `<li class="text-gray-300">${index + 2}. Travel via <span class="font-semibold ${color}">${travelMethod}</span> to <span class="font-semibold text-white">${getDisplayName(allNodes[leg.to_id]) || 'Unknown'}</span></li>`; 
+                });
+                html += `</ol>`; 
+                dom.routeDetailsContainer.innerHTML = html;
             } else { dom.routeDetailsContainer.innerHTML = `<h2 class="text-lg font-semibold text-white">No Route Found</h2><p class="text-yellow-400">A path could not be found between ${startName} and ${endName}.</p>`; }
             drawMap();
         }
 
+        // NEW: "Center on Me" function
+        function centerOnMyLocation() {
+            if (Object.keys(systems).length === 0) return;
+            
+            // Find the system with the highest position number
+            let latestSystem = null;
+            let maxPosition = -Infinity;
+            for (const system of Object.values(systems)) {
+                if (system.position > maxPosition) {
+                    maxPosition = system.position;
+                    latestSystem = system;
+                }
+            }
+
+            if (latestSystem) {
+                // Set a moderate zoom level
+                viewTransform.scale = 0.8;
+                // Calculate the translation needed to center the view on the system
+                viewTransform.translateX = (dom.canvas.width / 2) - (latestSystem.x * viewTransform.scale);
+                viewTransform.translateY = (dom.canvas.height / 2) - (latestSystem.y * viewTransform.scale);
+                drawMap();
+                localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform));
+            }
+        }
+        
+        // NEW: Toggle side panel function for mobile
+        function toggleSidePanel() {
+            const isExpanded = dom.menuButton.getAttribute('aria-expanded') === 'true';
+            dom.sidePanel.classList.toggle('-translate-x-full');
+            dom.menuButton.setAttribute('aria-expanded', !isExpanded);
+        }
+
+        // Core Map Functions (with drawing order fix)
         function clearRouteDisplay() { calculatedPathNodes = []; dom.routeDetailsContainer.innerHTML = ''; dom.startSystemInput.value = ''; dom.endSystemInput.value = ''; drawMap(); }
         function resizeCanvas() { if(dom.canvas.parentElement.clientWidth > 0){ dom.canvas.width = dom.canvas.clientWidth; dom.canvas.height = dom.canvas.clientHeight; if(dom.canvas.width > 0) drawMap(); } }
         function fitMapToView() { if (Object.keys(systems).length === 0) return; let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity; Object.values(systems).forEach(s => { minX=Math.min(minX,s.x); maxX=Math.max(maxX,s.x); minY=Math.min(minY,s.y); maxY=Math.max(maxY,s.y); }); const mapW=maxX-minX, mapH=maxY-minY, mapCX=minX+mapW/2, mapCY=minY+mapH/2; const scale=Math.min(dom.canvas.width/(mapW*1.2), dom.canvas.height/(mapH*1.2))||1; viewTransform = { scale, translateX: (dom.canvas.width/2)-(mapCX*scale), translateY: (dom.canvas.height/2)-(mapCY*scale) }; localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform));}
@@ -261,7 +338,7 @@
             
             // Pass 1: Draw all system nodes
             Object.values(systems).forEach(sys => {
-                if (typeof sys.x !== 'number' || typeof sys.y !== 'number') { console.error('Skipping rendering of malformed system object:', sys); return; }
+                if (typeof sys.x !== 'number' || typeof sys.y !== 'number') { return; }
                 const isOnPath = calculatedPathIds.has(String(sys.id));
                 const isHovered = hoveredSystem && hoveredSystem.id === sys.id;
                 ctx.fillStyle = isOnPath ? '#f59e0b' : '#38bdf8';
@@ -270,12 +347,10 @@
                 ctx.fill();
             });
 
-            // Draw virtual nodes
             calculatedPathNodes.forEach(node => {
                 if (node.id.toString().startsWith('virtual')) {
                     const size = 8 / viewTransform.scale;
-                    ctx.strokeStyle = '#f59e0b';
-                    ctx.lineWidth = 2 / viewTransform.scale;
+                    ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 2 / viewTransform.scale;
                     ctx.beginPath();
                     ctx.moveTo(node.x - size, node.y - size); ctx.lineTo(node.x + size, node.y + size);
                     ctx.moveTo(node.x + size, node.y - size); ctx.lineTo(node.x - size, node.y + size);
@@ -328,8 +403,7 @@
         }
 
         function onInteractionStart(e) {
-            isMouseDown = true;
-            isDragging = false;
+            isMouseDown = true; isDragging = false;
             const coords = getEventCoordinates(e);
             dragStartPos = { x: coords.x, y: coords.y };
             lastDragPosition = { x: coords.x, y: coords.y };
@@ -354,17 +428,12 @@
             let currentlyHovering = null;
             for (const system of Object.values(systems)) {
                 if (typeof system.x !== 'number' || typeof system.y !== 'number') continue;
-                const dx = worldX - system.x;
-                const dy = worldY - system.y;
+                const dx = worldX - system.x; const dy = worldY - system.y;
                 if (Math.sqrt(dx * dx + dy * dy) < (10 / viewTransform.scale)) {
-                    currentlyHovering = system;
-                    break;
+                    currentlyHovering = system; break;
                 }
             }
-            if (hoveredSystem !== currentlyHovering) {
-                hoveredSystem = currentlyHovering;
-                drawMap();
-            }
+            if (hoveredSystem !== currentlyHovering) { hoveredSystem = currentlyHovering; drawMap(); }
 
             if (e.touches && e.touches.length === 2) {
                 isDragging = false;
@@ -435,18 +504,15 @@
 
         function setupEventListeners() {
             window.addEventListener('resize', resizeCanvas);
-            dom.loginForm.addEventListener('submit', handleLogin);
-            dom.registerForm.addEventListener('submit', handleRegister);
-            dom.logoutButton.addEventListener('click', handleLogout);
-            dom.syncButton.addEventListener('click', handleSync);
-            dom.profileButton.addEventListener('click', openProfile);
-            dom.closeProfileButton.addEventListener('click', closeProfile);
-            dom.profileForm.addEventListener('submit', handleProfileUpdate);
-            dom.showRegisterViewButton.addEventListener('click', showRegisterView);
-            dom.showLoginViewButton.addEventListener('click', showLoginView);
-            dom.toggleAllCatapults.addEventListener('change', handleToggleAllCatapults);
-            dom.toggleUnclaimedNames.addEventListener('change', handleToggleUnclaimedNames);
+            dom.loginForm.addEventListener('submit', handleLogin); dom.registerForm.addEventListener('submit', handleRegister);
+            dom.logoutButton.addEventListener('click', handleLogout); dom.syncButton.addEventListener('click', handleSync);
+            dom.profileButton.addEventListener('click', openProfile); dom.closeProfileButton.addEventListener('click', closeProfile); dom.profileForm.addEventListener('submit', handleProfileUpdate);
+            dom.showRegisterViewButton.addEventListener('click', showRegisterView); dom.showLoginViewButton.addEventListener('click', showLoginView);
+            dom.toggleAllCatapults.addEventListener('change', handleToggleAllCatapults); dom.toggleUnclaimedNames.addEventListener('change', handleToggleUnclaimedNames);
             dom.resetViewButton.addEventListener('click', handleResetView);
+            dom.centerMeButton.addEventListener('click', centerOnMyLocation);
+            dom.menuButton.addEventListener('click', toggleSidePanel);
+            
             dom.routeForm.addEventListener('submit', (e) => {
                 e.preventDefault();
                 const startVal = dom.startSystemInput.value.trim();
@@ -466,16 +532,12 @@
             document.addEventListener('click', (e) => { if (!dom.routeForm.contains(e.target) && !dom.canvas.contains(e.target)) { activeRouteInput = null; }});
             dom.routeDetailsContainer.addEventListener('click', (e) => { if (e.target && e.target.id === 'clear-route-button') { clearRouteDisplay(); } });
 
-            dom.canvas.addEventListener('mousedown', onInteractionStart);
-            dom.canvas.addEventListener('mousemove', onInteractionMove);
-            dom.canvas.addEventListener('mouseup', onInteractionEnd);
-            dom.canvas.addEventListener('mouseleave', onInteractionEnd);
+            dom.canvas.addEventListener('mousedown', onInteractionStart); dom.canvas.addEventListener('mousemove', onInteractionMove);
+            dom.canvas.addEventListener('mouseup', onInteractionEnd); dom.canvas.addEventListener('mouseleave', onInteractionEnd);
             dom.canvas.addEventListener('wheel', (e) => { e.preventDefault(); const s=1.1, mX=e.clientX-dom.canvas.offsetLeft, mY=e.clientY-dom.canvas.offsetTop; const wX=(mX-viewTransform.translateX)/viewTransform.scale, wY=(mY-viewTransform.translateY)/viewTransform.scale; if(e.deltaY<0)viewTransform.scale*=s; else viewTransform.scale/=s; viewTransform.translateX=mX-wX*viewTransform.scale; viewTransform.translateY=mY-wY*viewTransform.scale; drawMap(); localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform)); });
             
-            dom.canvas.addEventListener('touchstart', onInteractionStart);
-            dom.canvas.addEventListener('touchmove', onInteractionMove);
-            dom.canvas.addEventListener('touchend', onInteractionEnd);
-            dom.canvas.addEventListener('touchcancel', onInteractionEnd);
+            dom.canvas.addEventListener('touchstart', onInteractionStart); dom.canvas.addEventListener('touchmove', onInteractionMove);
+            dom.canvas.addEventListener('touchend', onInteractionEnd); dom.canvas.addEventListener('touchcancel', onInteractionEnd);
         }
         
         setupEventListeners();
