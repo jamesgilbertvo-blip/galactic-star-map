@@ -97,7 +97,7 @@
     </div>
 
     <div id="map-view" class="hidden flex h-screen overflow-hidden">
-        <aside id="side-panel" class="absolute top-0 left-0 z-20 h-full w-full max-w-sm transform -translate-x-full transition-transform duration-300 ease-in-out md:relative md:max-w-xs md:translate-x-0 lg:max-w-sm bg-gray-900 p-6 flex-shrink-0 overflow-y-auto">
+        <aside id="side-panel" class="absolute top-0 left-0 z-20 h-full w-full max-w-sm transform transition-transform duration-300 ease-in-out md:relative md:max-w-xs md:translate-x-0 lg:max-w-sm bg-gray-900 p-6 flex-shrink-0 overflow-y-auto">
             <div class="space-y-6">
                 <header class="flex items-center justify-between">
                     <div><h1 class="text-2xl font-bold text-white">Galactic Star Map</h1><p id="welcome-message" class="text-sm text-gray-400"></p></div>
@@ -135,8 +135,9 @@
         </aside>
 
         <main class="relative flex-grow flex items-center justify-center">
-            <button id="menu-button" class="md:hidden absolute top-4 left-4 z-30 p-2 bg-gray-800 text-white rounded-md" title="Toggle Menu" aria-label="Toggle map controls panel" aria-controls="side-panel" aria-expanded="false">
+            <button id="menu-button" class="md:hidden absolute top-4 left-4 z-30 p-2 bg-gray-800 text-white rounded-md flex items-center space-x-2" title="Toggle Menu" aria-label="Toggle map controls panel" aria-controls="side-panel" aria-expanded="true">
                 <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
+                <span class="text-sm">Toggle Controls</span>
             </button>
             <canvas id="map-canvas" class="w-full h-full"></canvas>
         </main>
@@ -451,7 +452,6 @@
                             else { toggledCatapultIds.add(systemId); }
                         }
                     } else if (activeRouteInput) {
-                        // FIX #3: Use the correct format when populating the input
                         if (hoveredSystem.name.startsWith("System ")) {
                             activeRouteInput.value = `#${hoveredSystem.position}`;
                         } else {
