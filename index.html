@@ -96,7 +96,7 @@
         </div>
     </div>
 
-    <div id="map-view" class="hidden relative h-screen w-screen overflow-hidden">
+    <div id="map-view" class="hidden flex h-screen overflow-hidden">
         <aside id="side-panel" class="absolute top-0 left-0 z-20 h-full w-full max-w-sm transform -translate-x-full transition-transform duration-300 ease-in-out md:relative md:max-w-xs md:translate-x-0 lg:max-w-sm bg-gray-900 p-6 flex-shrink-0 overflow-y-auto">
             <div class="space-y-6">
                 <header class="flex items-center justify-between">
@@ -170,13 +170,11 @@
             registerError: document.getElementById('register-error'), showRegisterViewButton: document.getElementById('show-register-view-button'), showLoginViewButton: document.getElementById('show-login-view-button'), 
             toggleAllCatapults: document.getElementById('toggle-all-catapults'), userControls: document.getElementById('user-controls'), 
             resetViewButton: document.getElementById('reset-view-button'), toggleUnclaimedNames: document.getElementById('toggle-unclaimed-names'),
-            // NEW DOM elements
             sidePanel: document.getElementById('side-panel'),
             menuButton: document.getElementById('menu-button'),
             centerMeButton: document.getElementById('center-me-button')
         };
 
-        // API and View Functions (unchanged)
         const apiFetch = (url, options = {}) => { options.credentials = 'include'; return fetch(url, options); };
         const handleLogin = async (e) => { e.preventDefault(); const r=await apiFetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:dom.loginForm.username.value,password:dom.loginForm.password.value})}); const d=await r.json(); if(r.ok)showMapView(d.username, d.is_admin, d.is_developer); else dom.loginError.textContent=d.message||'Login failed.'; };
         const handleRegister = async (e) => { e.preventDefault(); const p={username:dom.registerForm.username.value,password:dom.registerForm.password.value,api_key:dom.registerForm.api_key.value}; const r=await apiFetch('/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); const d=await r.json(); if(r.ok)showMapView(d.username, d.is_admin, d.is_developer, true); else dom.registerError.textContent=d.message||'Registration failed.'; };
@@ -188,6 +186,7 @@
         const handleProfileUpdate = async (e) => { e.preventDefault(); dom.profileStatus.textContent = 'Saving...'; const p={}; if (dom.apiKeyInput.value && dom.apiKeyInput.value !== '(Key is set and encrypted)') p.api_key = dom.apiKeyInput.value; if (dom.newPasswordInput.value) p.password = dom.newPasswordInput.value; const r=await apiFetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); const d=await r.json(); dom.profileStatus.textContent = d.message; setTimeout(closeProfile, 2000); };
         async function fetchMapData(shouldFit = true) { try {const r = await apiFetch('/api/systems'); if (!r.ok) { if (r.status === 401) handleLogout(); return; } const d = await r.json(); systems = d.systems; wormholes = d.wormholes; populateDataList(); if (shouldFit) { fitMapToView(); } drawMap();} catch (e) { console.error("Failed to fetch or draw map data:", e); } }
         async function findPath(startId, endId) { const r = await apiFetch('/api/path', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ start_id: startId, end_id: endId }), }); displayPathResults(await r.json()); }
+
         function showLoginView() { dom.mapView.classList.add('hidden'); dom.registerView.classList.add('hidden'); dom.loginView.classList.remove('hidden'); }
         function showRegisterView() { dom.mapView.classList.add('hidden'); dom.loginView.classList.add('hidden'); dom.registerView.classList.remove('hidden'); }
         function showMapView(username, isAdmin, isDeveloper, isNewRegistration = false) {
@@ -234,19 +233,20 @@
                 let html = `<div class="flex justify-between items-center"><h2 class="text-lg font-semibold text-white">Route: ${startName} to ${endName}</h2><button id="clear-route-button" class="text-sm text-gray-400 hover:text-white focus:outline-none">&times; Clear</button></div><p class="text-sm text-gray-400">Total Distance: ${result.distance.toFixed(2)}</p><ol class="mt-2 space-y-2 text-sm">`;
                 
                 const getDisplayName = (node) => {
+                    if (!node) return 'Unknown';
                     if (node.name.startsWith("System ")) {
                         return `#${node.position}`;
                     }
                     return node.name;
                 };
 
-                html += `<li class="text-gray-300">1. Start at: <span class="font-semibold text-white">${getDisplayName(allNodes[result.simple_path[0].from_id]) || 'Unknown'}</span></li>`;
+                html += `<li class="text-gray-300">1. Start at: <span class="font-semibold text-white">${getDisplayName(allNodes[result.simple_path[0].from_id])}</span></li>`;
                 result.simple_path.forEach((leg, index) => { 
                     const travelMethod = leg.method.charAt(0).toUpperCase() + leg.method.slice(1); 
                     let color = 'text-amber-400'; 
                     if (leg.method === 'wormhole') color = 'text-red-400'; 
                     if (leg.method === 'catapult') color = 'text-lime-400'; 
-                    html += `<li class="text-gray-300">${index + 2}. Travel via <span class="font-semibold ${color}">${travelMethod}</span> to <span class="font-semibold text-white">${getDisplayName(allNodes[leg.to_id]) || 'Unknown'}</span></li>`; 
+                    html += `<li class="text-gray-300">${index + 2}. Travel via <span class="font-semibold ${color}">${travelMethod}</span> to <span class="font-semibold text-white">${getDisplayName(allNodes[leg.to_id])}</span></li>`; 
                 });
                 html += `</ol>`; 
                 dom.routeDetailsContainer.innerHTML = html;
@@ -254,11 +254,9 @@
             drawMap();
         }
 
-        // NEW: "Center on Me" function
         function centerOnMyLocation() {
             if (Object.keys(systems).length === 0) return;
             
-            // Find the system with the highest position number
             let latestSystem = null;
             let maxPosition = -Infinity;
             for (const system of Object.values(systems)) {
@@ -269,9 +267,7 @@
             }
 
             if (latestSystem) {
-                // Set a moderate zoom level
                 viewTransform.scale = 0.8;
-                // Calculate the translation needed to center the view on the system
                 viewTransform.translateX = (dom.canvas.width / 2) - (latestSystem.x * viewTransform.scale);
                 viewTransform.translateY = (dom.canvas.height / 2) - (latestSystem.y * viewTransform.scale);
                 drawMap();
@@ -279,14 +275,12 @@
             }
         }
         
-        // NEW: Toggle side panel function for mobile
         function toggleSidePanel() {
             const isExpanded = dom.menuButton.getAttribute('aria-expanded') === 'true';
             dom.sidePanel.classList.toggle('-translate-x-full');
             dom.menuButton.setAttribute('aria-expanded', !isExpanded);
         }
 
-        // Core Map Functions (with drawing order fix)
         function clearRouteDisplay() { calculatedPathNodes = []; dom.routeDetailsContainer.innerHTML = ''; dom.startSystemInput.value = ''; dom.endSystemInput.value = ''; drawMap(); }
         function resizeCanvas() { if(dom.canvas.parentElement.clientWidth > 0){ dom.canvas.width = dom.canvas.clientWidth; dom.canvas.height = dom.canvas.clientHeight; if(dom.canvas.width > 0) drawMap(); } }
         function fitMapToView() { if (Object.keys(systems).length === 0) return; let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity; Object.values(systems).forEach(s => { minX=Math.min(minX,s.x); maxX=Math.max(maxX,s.x); minY=Math.min(minY,s.y); maxY=Math.max(maxY,s.y); }); const mapW=maxX-minX, mapH=maxY-minY, mapCX=minX+mapW/2, mapCY=minY+mapH/2; const scale=Math.min(dom.canvas.width/(mapW*1.2), dom.canvas.height/(mapH*1.2))||1; viewTransform = { scale, translateX: (dom.canvas.width/2)-(mapCX*scale), translateY: (dom.canvas.height/2)-(mapCY*scale) }; localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform));}
@@ -336,7 +330,6 @@
                 }
             }
             
-            // Pass 1: Draw all system nodes
             Object.values(systems).forEach(sys => {
                 if (typeof sys.x !== 'number' || typeof sys.y !== 'number') { return; }
                 const isOnPath = calculatedPathIds.has(String(sys.id));
@@ -358,7 +351,6 @@
                 }
             });
 
-            // Pass 2: Draw all labels on top
             Object.values(systems).forEach(sys => {
                 if (typeof sys.x !== 'number' || typeof sys.y !== 'number') return;
                 const isOnPath = calculatedPathIds.has(String(sys.id));
@@ -504,11 +496,17 @@
 
         function setupEventListeners() {
             window.addEventListener('resize', resizeCanvas);
-            dom.loginForm.addEventListener('submit', handleLogin); dom.registerForm.addEventListener('submit', handleRegister);
-            dom.logoutButton.addEventListener('click', handleLogout); dom.syncButton.addEventListener('click', handleSync);
-            dom.profileButton.addEventListener('click', openProfile); dom.closeProfileButton.addEventListener('click', closeProfile); dom.profileForm.addEventListener('submit', handleProfileUpdate);
-            dom.showRegisterViewButton.addEventListener('click', showRegisterView); dom.showLoginViewButton.addEventListener('click', showLoginView);
-            dom.toggleAllCatapults.addEventListener('change', handleToggleAllCatapults); dom.toggleUnclaimedNames.addEventListener('change', handleToggleUnclaimedNames);
+            dom.loginForm.addEventListener('submit', handleLogin);
+            dom.registerForm.addEventListener('submit', handleRegister);
+            dom.logoutButton.addEventListener('click', handleLogout);
+            dom.syncButton.addEventListener('click', handleSync);
+            dom.profileButton.addEventListener('click', openProfile);
+            dom.closeProfileButton.addEventListener('click', closeProfile);
+            dom.profileForm.addEventListener('submit', handleProfileUpdate);
+            dom.showRegisterViewButton.addEventListener('click', showRegisterView);
+            dom.showLoginViewButton.addEventListener('click', showLoginView);
+            dom.toggleAllCatapults.addEventListener('change', handleToggleAllCatapults);
+            dom.toggleUnclaimedNames.addEventListener('change', handleToggleUnclaimedNames);
             dom.resetViewButton.addEventListener('click', handleResetView);
             dom.centerMeButton.addEventListener('click', centerOnMyLocation);
             dom.menuButton.addEventListener('click', toggleSidePanel);
