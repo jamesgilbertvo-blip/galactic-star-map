@@ -163,6 +163,9 @@
         let systems = {}; let wormholes = []; let calculatedPathNodes = []; let viewTransform = { scale: 1, translateX: 0, translateY: 0 }; 
         let isMouseDown = false; let isDragging = false; let dragStartPos = { x: 0, y: 0 }; let lastDragPosition = {x:0, y:0};
         const SPIRAL_TIGHTNESS = 0.1; const SPIRAL_SCALE = 50;
+        let toggledCatapultIds = new Set();
+        let activeRouteInput = null;
+        let hoveredSystem = null;
         let showUnclaimedNames = false;
         let highlightedCatapultSystemId = null;
         let longPressTimer; let initialTouchDistance = null;
@@ -340,7 +343,8 @@
                 Object.values(systems).forEach(sys => { 
                     if (typeof sys.position !== 'number' || !sys.catapult_radius || sys.catapult_radius <= 0) return;
                     const isToggled = toggledCatapultIds.has(String(sys.id));
-                    if (!isToggled) { // Simplified logic
+                    // --- FIX IS HERE: Logic respects both global filter and individual toggle ---
+                    if (!isToggled) { 
                         let rangeColor = 'rgba(132, 204, 22, 0.3)';
                         if (highlightedCatapultSystemId !== null) { rangeColor = (sys.id === highlightedCatapultSystemId) ? 'rgba(163, 230, 57, 0.9)' : 'rgba(132, 204, 22, 0.05)'; }
                         ctx.strokeStyle = rangeColor; ctx.lineWidth = 2 / viewTransform.scale;
