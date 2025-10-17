@@ -40,6 +40,14 @@
             50% { transform: translateY(-10px); }
             100% { transform: translateY(0px); }
         }
+        /* Animation for flashing new systems */
+        @keyframes flash {
+            0%, 100% { box-shadow: 0 0 12px 6px rgba(250, 204, 21, 0.7); }
+            50% { box-shadow: 0 0 6px 3px rgba(250, 204, 21, 0.3); }
+        }
+        .flash-node {
+            animation: flash 1.5s ease-in-out;
+        }
     </style>
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
@@ -97,7 +105,7 @@
     </div>
 
     <div id="map-view" class="hidden flex h-screen overflow-hidden">
-        <aside id="side-panel" class="absolute top-0 left-0 z-20 h-full w-full max-w-sm transform -translate-x-full transition-transform duration-300 ease-in-out md:relative md:max-w-xs md:translate-x-0 lg:max-w-sm bg-gray-900 p-6 flex-shrink-0 overflow-y-auto">
+        <aside id="side-panel" class="absolute top-0 left-0 z-20 h-full w-full max-w-sm transform transition-transform duration-300 ease-in-out md:relative md:max-w-xs md:translate-x-0 lg:max-w-sm bg-gray-900 p-6 flex-shrink-0 overflow-y-auto">
             <div class="space-y-6">
                 <header class="flex items-center justify-between">
                     <div><h1 class="text-2xl font-bold text-white">Galactic Star Map</h1><p id="welcome-message" class="text-sm text-gray-400"></p></div>
@@ -118,12 +126,27 @@
                     <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md">Find Shortest Path</button>
                 </form>
                 <div id="route-details" aria-live="polite" class="space-y-2"></div>
+                
+                <div class="border-t border-gray-700 pt-4 space-y-4">
+                    <h3 class="text-lg font-semibold text-white">Search & Filters</h3>
+                    <form id="search-form" class="space-y-2">
+                        <input type="text" id="search-input" list="system-list" class="w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="Find & Center on System...">
+                        <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md text-sm">Search</button>
+                    </form>
+                    <div class="space-y-2">
+                         <div class="flex items-center">
+                            <input id="filter-catapults" type="checkbox" checked class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
+                            <label for="filter-catapults" class="ml-2 block text-sm text-gray-300">Show Catapult Ranges</label>
+                        </div>
+                        <div class="flex items-center">
+                            <input id="filter-wormholes" type="checkbox" checked class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
+                            <label for="filter-wormholes" class="ml-2 block text-sm text-gray-300">Show Wormholes</label>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="border-t border-gray-700 pt-4 space-y-2" aria-hidden="true">
                     <h3 class="text-lg font-semibold text-white">Display Options</h3>
-                    <div class="flex items-center">
-                        <input id="toggle-all-catapults" type="checkbox" checked class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
-                        <label for="toggle-all-catapults" class="ml-2 block text-sm text-gray-300">Show All Catapult Ranges</label>
-                    </div>
                     <div class="flex items-center">
                         <input id="toggle-unclaimed-names" type="checkbox" class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
                         <label for="toggle-unclaimed-names" class="ml-2 block text-sm text-gray-300">Show Unclaimed Names</label>
@@ -148,12 +171,15 @@
         let systems = {}; let wormholes = []; let calculatedPathNodes = []; let viewTransform = { scale: 1, translateX: 0, translateY: 0 }; 
         let isMouseDown = false; let isDragging = false; let dragStartPos = { x: 0, y: 0 }; let lastDragPosition = {x:0, y:0};
         const SPIRAL_TIGHTNESS = 0.1; const SPIRAL_SCALE = 50;
-        let showAllCatapults = true; let toggledCatapultIds = new Set();
-        let activeRouteInput = null;
-        let hoveredSystem = null;
         let showUnclaimedNames = false;
         let highlightedCatapultSystemId = null;
         let longPressTimer; let initialTouchDistance = null;
+
+        // NEW: State variables for new features
+        let newlySyncedSystemIds = new Set();
+        let highlightedSearchSystemId = null;
+        let filterShowCatapults = true;
+        let filterShowWormholes = true;
 
         const dom = { 
             loginView: document.getElementById('login-view'), mapView: document.getElementById('map-view'), registerView: document.getElementById('register-view'), 
@@ -166,10 +192,15 @@
             profileButton: document.getElementById('profile-button'), closeProfileButton: document.getElementById('close-profile-button'), profileForm: document.getElementById('profile-form'), 
             apiKeyInput: document.getElementById('api-key-input'), newPasswordInput: document.getElementById('new-password-input'), profileStatus: document.getElementById('profile-status'), 
             registerError: document.getElementById('register-error'), showRegisterViewButton: document.getElementById('show-register-view-button'), showLoginViewButton: document.getElementById('show-login-view-button'), 
-            toggleAllCatapults: document.getElementById('toggle-all-catapults'), userControls: document.getElementById('user-controls'), 
+            userControls: document.getElementById('user-controls'), 
             resetViewButton: document.getElementById('reset-view-button'), toggleUnclaimedNames: document.getElementById('toggle-unclaimed-names'),
             sidePanel: document.getElementById('side-panel'),
-            menuButton: document.getElementById('menu-button')
+            menuButton: document.getElementById('menu-button'),
+            // NEW DOM elements
+            searchForm: document.getElementById('search-form'),
+            searchInput: document.getElementById('search-input'),
+            filterCatapults: document.getElementById('filter-catapults'),
+            filterWormholes: document.getElementById('filter-wormholes')
         };
 
         const apiFetch = (url, options = {}) => { options.credentials = 'include'; return fetch(url, options); };
@@ -177,11 +208,59 @@
         const handleRegister = async (e) => { e.preventDefault(); const p={username:dom.registerForm.username.value,password:dom.registerForm.password.value,api_key:dom.registerForm.api_key.value}; const r=await apiFetch('/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); const d=await r.json(); if(r.ok)showMapView(d.username, d.is_admin, d.is_developer, true); else dom.registerError.textContent=d.message||'Registration failed.'; };
         const handleLogout = async () => { await apiFetch('/logout', { method: 'POST' }); localStorage.removeItem('mapViewTransform'); showLoginView(); };
         const checkLoginStatus = async () => { const r=await apiFetch('/status'); const d=await r.json(); if(d.logged_in)showMapView(d.username, d.is_admin, d.is_developer); else showLoginView(); };
-        const handleSync = async () => { dom.syncStatus.textContent = 'Syncing...'; dom.syncButton.disabled = true; try { const r=await apiFetch('/api/sync',{method:'POST'}); const d=await r.json(); dom.syncStatus.textContent = d.message; if (r.ok) await fetchMapData(false); } catch (e) { dom.syncStatus.textContent = 'Error: Could not connect.'; } finally { dom.syncButton.disabled = false; setTimeout(() => { dom.syncStatus.textContent = ''; }, 7000); } };
+        
+        const handleSync = async () => {
+            const oldSystemIds = new Set(Object.keys(systems));
+            dom.syncStatus.textContent = 'Syncing...'; 
+            dom.syncButton.disabled = true; 
+            try { 
+                const r = await apiFetch('/api/sync', {method:'POST'}); 
+                const d = await r.json(); 
+                dom.syncStatus.textContent = d.message; 
+                if (r.ok) {
+                    await fetchMapData(false, oldSystemIds); // Pass old IDs to fetchMapData
+                }
+            } catch (e) { 
+                dom.syncStatus.textContent = 'Error: Could not connect.'; 
+            } finally { 
+                dom.syncButton.disabled = false; 
+                setTimeout(() => { dom.syncStatus.textContent = ''; }, 7000); 
+            } 
+        };
+
         const openProfile = async () => { dom.profileStatus.textContent = ''; dom.newPasswordInput.value = ''; const r=await apiFetch('/api/profile'); const d=await r.json(); dom.apiKeyInput.value = d.api_key_set ? '(Key is set and encrypted)' : ''; dom.apiKeyInput.placeholder = d.api_key_set ? 'Enter a new key to overwrite' : 'Enter your game API key'; dom.profileView.classList.remove('hidden'); };
         const closeProfile = () => dom.profileView.classList.add('hidden');
         const handleProfileUpdate = async (e) => { e.preventDefault(); dom.profileStatus.textContent = 'Saving...'; const p={}; if (dom.apiKeyInput.value && dom.apiKeyInput.value !== '(Key is set and encrypted)') p.api_key = dom.apiKeyInput.value; if (dom.newPasswordInput.value) p.password = dom.newPasswordInput.value; const r=await apiFetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); const d=await r.json(); dom.profileStatus.textContent = d.message; setTimeout(closeProfile, 2000); };
-        async function fetchMapData(shouldFit = true) { try {const r = await apiFetch('/api/systems'); if (!r.ok) { if (r.status === 401) handleLogout(); return; } const d = await r.json(); systems = d.systems; wormholes = d.wormholes; populateDataList(); if (shouldFit) { fitMapToView(); } drawMap();} catch (e) { console.error("Failed to fetch or draw map data:", e); } }
+        
+        async function fetchMapData(shouldFit = true, oldSystemIds = null) { 
+            try {
+                const r = await apiFetch('/api/systems'); 
+                if (!r.ok) { if (r.status === 401) handleLogout(); return; } 
+                const d = await r.json(); 
+                systems = d.systems; 
+                wormholes = d.wormholes; 
+                populateDataList(); 
+                if (shouldFit) { fitMapToView(); }
+                
+                // Visual Sync Feedback logic
+                if (oldSystemIds) {
+                    newlySyncedSystemIds.clear();
+                    Object.keys(systems).forEach(id => {
+                        if (!oldSystemIds.has(id)) {
+                            newlySyncedSystemIds.add(id);
+                        }
+                    });
+                    if (newlySyncedSystemIds.size > 0) {
+                        setTimeout(() => {
+                            newlySyncedSystemIds.clear();
+                            drawMap();
+                        }, 2000); // Highlight lasts for 2 seconds
+                    }
+                }
+                drawMap();
+            } catch (e) { console.error("Failed to fetch or draw map data:", e); } 
+        }
+
         async function findPath(startId, endId) { const r = await apiFetch('/api/path', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ start_id: startId, end_id: endId }), }); displayPathResults(await r.json()); }
 
         function showLoginView() { dom.mapView.classList.add('hidden'); dom.registerView.classList.add('hidden'); dom.loginView.classList.remove('hidden'); }
@@ -224,7 +303,6 @@
             dom.startSystemInput.value = '';
             dom.endSystemInput.value = '';
             
-            // --- FIX IS HERE: Use detailed_path instead of simple_path ---
             if (result.detailed_path && result.detailed_path.length > 0 && result.distance != null) {
                 let html = `<div class="flex justify-between items-center"><h2 class="text-lg font-semibold text-white">Route: ${startName} to ${endName}</h2><button id="clear-route-button" class="text-sm text-gray-400 hover:text-white focus:outline-none">&times; Clear</button></div><p class="text-sm text-gray-400">Total Distance: ${result.distance.toFixed(2)}</p><ol class="mt-2 space-y-2 text-sm">`;
                 
@@ -255,7 +333,7 @@
             dom.sidePanel.classList.toggle('-translate-x-full');
             dom.menuButton.setAttribute('aria-expanded', !isExpanded);
         }
-
+        
         function clearRouteDisplay() { calculatedPathNodes = []; dom.routeDetailsContainer.innerHTML = ''; dom.startSystemInput.value = ''; dom.endSystemInput.value = ''; drawMap(); }
         function resizeCanvas() { if(dom.canvas.parentElement.clientWidth > 0){ dom.canvas.width = dom.canvas.clientWidth; dom.canvas.height = dom.canvas.clientHeight; if(dom.canvas.width > 0) drawMap(); } }
         function fitMapToView() { if (Object.keys(systems).length === 0) return; let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity; Object.values(systems).forEach(s => { minX=Math.min(minX,s.x); maxX=Math.max(maxX,s.x); minY=Math.min(minY,s.y); maxY=Math.max(maxY,s.y); }); const mapW=maxX-minX, mapH=maxY-minY, mapCX=minX+mapW/2, mapCY=minY+mapH/2; const scale=Math.min(dom.canvas.width/(mapW*1.2), dom.canvas.height/(mapH*1.2))||1; viewTransform = { scale, translateX: (dom.canvas.width/2)-(mapCX*scale), translateY: (dom.canvas.height/2)-(mapCY*scale) }; localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform));}
@@ -269,10 +347,10 @@
             ctx.translate(viewTransform.translateX, viewTransform.translateY);
             ctx.scale(viewTransform.scale, viewTransform.scale);
             if(Object.keys(systems).length > 0){ let maxPos=Math.max(...Object.values(systems).filter(s => s.position).map(s=>s.position)); if(maxPos>0){ ctx.strokeStyle='rgba(75,85,99,0.2)';ctx.lineWidth=1/viewTransform.scale;ctx.beginPath();const s=1;ctx.moveTo(0,0);for(let p=s;p<=maxPos*1.1;p+=s)ctx.lineTo(getSpiralPoint(p).x,getSpiralPoint(p).y);ctx.stroke();}}
-            Object.values(systems).forEach(sys => { 
-                if (typeof sys.position !== 'number' || !sys.catapult_radius || sys.catapult_radius <= 0) return;
-                const isToggled = toggledCatapultIds.has(String(sys.id));
-                if (showAllCatapults ^ isToggled) {
+            
+            if (filterShowCatapults) {
+                Object.values(systems).forEach(sys => { 
+                    if (typeof sys.position !== 'number' || !sys.catapult_radius || sys.catapult_radius <= 0) return;
                     let rangeColor = 'rgba(132, 204, 22, 0.3)';
                     if (highlightedCatapultSystemId !== null) { rangeColor = (sys.id === highlightedCatapultSystemId) ? 'rgba(163, 230, 57, 0.9)' : 'rgba(132, 204, 22, 0.05)'; }
                     ctx.strokeStyle = rangeColor; ctx.lineWidth = 2 / viewTransform.scale;
@@ -281,11 +359,14 @@
                     ctx.beginPath(); ctx.moveTo(getSpiralPoint(startPos).x, getSpiralPoint(startPos).y);
                     for (let pos = startPos + step; pos < endPos; pos += step) { ctx.lineTo(getSpiralPoint(pos).x, getSpiralPoint(pos).y); }
                     ctx.lineTo(getSpiralPoint(endPos).x, getSpiralPoint(endPos).y); ctx.stroke();
-                }
-            });
-            ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)'; ctx.lineWidth = 1 / viewTransform.scale; ctx.setLineDash([5 / viewTransform.scale, 5 / viewTransform.scale]);
-            wormholes.forEach(wh => { const sA=systems[wh[0]], sB=systems[wh[1]]; if (sA && sB) { ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } });
-            ctx.setLineDash([]);
+                });
+            }
+
+            if (filterShowWormholes) {
+                ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)'; ctx.lineWidth = 1 / viewTransform.scale; ctx.setLineDash([5 / viewTransform.scale, 5 / viewTransform.scale]);
+                wormholes.forEach(wh => { const sA=systems[wh[0]], sB=systems[wh[1]]; if (sA && sB) { ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } });
+                ctx.setLineDash([]);
+            }
             
             const calculatedPathIds = new Set(calculatedPathNodes.map(p => p.id));
             if (calculatedPathNodes.length > 1) {
@@ -309,10 +390,19 @@
                 if (typeof sys.x !== 'number' || typeof sys.y !== 'number') { return; }
                 const isOnPath = calculatedPathIds.has(String(sys.id));
                 const isHovered = hoveredSystem && hoveredSystem.id === sys.id;
-                ctx.fillStyle = isOnPath ? '#f59e0b' : '#38bdf8';
+                const isNewlySynced = newlySyncedSystemIds.has(String(sys.id));
+                const isSearched = highlightedSearchSystemId === sys.id;
+                
+                ctx.fillStyle = isOnPath || isSearched ? '#f59e0b' : '#38bdf8';
                 ctx.beginPath();
-                ctx.arc(sys.x, sys.y, (isOnPath || isHovered ? 6 : 4) / viewTransform.scale, 0, Math.PI * 2);
+                ctx.arc(sys.x, sys.y, (isOnPath || isHovered || isSearched ? 6 : 4) / viewTransform.scale, 0, Math.PI * 2);
                 ctx.fill();
+
+                if (isNewlySynced) {
+                    ctx.strokeStyle = 'rgba(250, 204, 21, 0.9)'; // Flashing yellow
+                    ctx.lineWidth = 3 / viewTransform.scale;
+                    ctx.stroke();
+                }
             });
 
             calculatedPathNodes.forEach(node => {
@@ -330,18 +420,19 @@
                 if (typeof sys.x !== 'number' || typeof sys.y !== 'number') return;
                 const isOnPath = calculatedPathIds.has(String(sys.id));
                 const isHovered = hoveredSystem && hoveredSystem.id === sys.id;
+                const isSearched = highlightedSearchSystemId === sys.id;
                 
                 let labelText = sys.name;
                 if (sys.name.startsWith("System ") && typeof sys.position === 'number') { labelText = `#${sys.position}`; }
                 const isDefaultName = labelText.startsWith("#");
-                let shouldShowLabel = (isOnPath || isHovered || viewTransform.scale > 0.8);
-                if (isDefaultName && !showUnclaimedNames && !isOnPath && !isHovered) { shouldShowLabel = false; }
+                let shouldShowLabel = (isOnPath || isHovered || isSearched || viewTransform.scale > 0.8);
+                if (isDefaultName && !showUnclaimedNames && !isOnPath && !isHovered && !isSearched) { shouldShowLabel = false; }
 
                 if (shouldShowLabel) {
-                    ctx.fillStyle = (isOnPath || isHovered) ? '#ffffff' : '#e5e7eb';
-                    ctx.font = `${(isOnPath || isHovered ? 12 : 10) / viewTransform.scale}px Inter`;
+                    ctx.fillStyle = (isOnPath || isHovered || isSearched) ? '#ffffff' : '#e5e7eb';
+                    ctx.font = `${(isOnPath || isHovered || isSearched ? 12 : 10) / viewTransform.scale}px Inter`;
                     ctx.textAlign = 'center';
-                    ctx.fillText(labelText, sys.x, sys.y - ((isOnPath || isHovered ? 10 : 8) / viewTransform.scale));
+                    ctx.fillText(labelText, sys.x, sys.y - ((isOnPath || isHovered || isSearched ? 10 : 8) / viewTransform.scale));
                 }
             });
 
@@ -357,7 +448,6 @@
 
             ctx.restore();
         }
-        function handleToggleAllCatapults(e) { showAllCatapults = e.target.checked; toggledCatapultIds.clear(); drawMap(); }
         function handleToggleUnclaimedNames(e) { showUnclaimedNames = e.target.checked; drawMap(); }
         function handleResetView() { fitMapToView(); drawMap(); }
 
@@ -485,8 +575,7 @@
             dom.profileForm.addEventListener('submit', handleProfileUpdate);
             dom.showRegisterViewButton.addEventListener('click', showRegisterView);
             dom.showLoginViewButton.addEventListener('click', showLoginView);
-            dom.toggleAllCatapults.addEventListener('change', handleToggleAllCatapults);
-            dom.toggleUnclaimedNames.addEventListener('change', handleToggleUnclaimedNames);
+            dom.toggleUnclaimedNames.addEventListener('change', (e) => { showUnclaimedNames = e.target.checked; drawMap(); });
             dom.resetViewButton.addEventListener('click', handleResetView);
             dom.menuButton.addEventListener('click', toggleSidePanel);
             
@@ -502,8 +591,33 @@
                 const startId = parseInput(startVal);
                 const endId = parseInput(endVal);
                 if (startId && endId) { findPath(startId, endId); } 
-                else { dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Could not find one or both locations. Please use a known system name or format coordinates as #123.45</p>`; }
+                else { dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Could not find one or both locations.</p>`; }
             });
+
+            dom.searchForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const query = dom.searchInput.value.trim().toLowerCase();
+                const foundSystem = Object.values(systems).find(s => s.name.toLowerCase() === query || `#${s.position}` === query);
+                if (foundSystem) {
+                    viewTransform.scale = 1.5; // Zoom in
+                    viewTransform.translateX = (dom.canvas.width / 2) - (foundSystem.x * viewTransform.scale);
+                    viewTransform.translateY = (dom.canvas.height / 2) - (foundSystem.y * viewTransform.scale);
+                    
+                    highlightedSearchSystemId = foundSystem.id;
+                    drawMap();
+                    // Remove highlight after a moment
+                    setTimeout(() => {
+                        highlightedSearchSystemId = null;
+                        drawMap();
+                    }, 2000);
+                } else {
+                    alert("System not found in your discovered map.");
+                }
+            });
+
+            dom.filterCatapults.addEventListener('change', (e) => { filterShowCatapults = e.target.checked; drawMap(); });
+            dom.filterWormholes.addEventListener('change', (e) => { filterShowWormholes = e.target.checked; drawMap(); });
+
             dom.startSystemInput.addEventListener('focus', () => { activeRouteInput = dom.startSystemInput; });
             dom.endSystemInput.addEventListener('focus', () => { activeRouteInput = dom.endSystemInput; });
             document.addEventListener('click', (e) => { if (!dom.routeForm.contains(e.target) && !dom.canvas.contains(e.target)) { activeRouteInput = null; }});
