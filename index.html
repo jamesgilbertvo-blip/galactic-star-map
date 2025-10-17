@@ -97,7 +97,7 @@
     </div>
 
     <div id="map-view" class="hidden flex h-screen overflow-hidden">
-        <aside id="side-panel" class="absolute top-0 left-0 z-20 h-full w-full max-w-sm transform transition-transform duration-300 ease-in-out md:relative md:max-w-xs md:translate-x-0 lg:max-w-sm bg-gray-900 p-6 flex-shrink-0 overflow-y-auto">
+        <aside id="side-panel" class="absolute top-0 left-0 z-20 h-full w-full max-w-sm transform -translate-x-full transition-transform duration-300 ease-in-out md:relative md:max-w-xs md:translate-x-0 lg:max-w-sm bg-gray-900 p-6 flex-shrink-0 overflow-y-auto">
             <div class="space-y-6">
                 <header class="flex items-center justify-between">
                     <div><h1 class="text-2xl font-bold text-white">Galactic Star Map</h1><p id="welcome-message" class="text-sm text-gray-400"></p></div>
@@ -224,7 +224,8 @@
             dom.startSystemInput.value = '';
             dom.endSystemInput.value = '';
             
-            if (result.simple_path && result.simple_path.length > 0 && result.distance != null) {
+            // --- FIX IS HERE: Use detailed_path instead of simple_path ---
+            if (result.detailed_path && result.detailed_path.length > 0 && result.distance != null) {
                 let html = `<div class="flex justify-between items-center"><h2 class="text-lg font-semibold text-white">Route: ${startName} to ${endName}</h2><button id="clear-route-button" class="text-sm text-gray-400 hover:text-white focus:outline-none">&times; Clear</button></div><p class="text-sm text-gray-400">Total Distance: ${result.distance.toFixed(2)}</p><ol class="mt-2 space-y-2 text-sm">`;
                 
                 const getDisplayName = (node) => {
@@ -235,8 +236,8 @@
                     return node.name;
                 };
 
-                html += `<li class="text-gray-300">1. Start at: <span class="font-semibold text-white">${getDisplayName(allNodes[result.simple_path[0].from_id])}</span></li>`;
-                result.simple_path.forEach((leg, index) => { 
+                html += `<li class="text-gray-300">1. Start at: <span class="font-semibold text-white">${getDisplayName(allNodes[result.detailed_path[0].from_id])}</span></li>`;
+                result.detailed_path.forEach((leg, index) => { 
                     const travelMethod = leg.method.charAt(0).toUpperCase() + leg.method.slice(1); 
                     let color = 'text-amber-400'; 
                     if (leg.method === 'wormhole') color = 'text-red-400'; 

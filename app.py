@@ -105,12 +105,18 @@ def get_spiral_coords(position):
 
 def fetch_api_data(url, api_key):
     if not api_key: return None
-    headers = {'Authorization': f'Bearer {api_key}', 'Accept': 'application/json'}
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
     try:
         response = requests.get(url, headers=headers)
         response.raise_for_status()
         return response.json()
-    except requests.exceptions.RequestException: return None
+    except requests.exceptions.RequestException as e:
+        print(f"API request failed for {url}: {e}", file=sys.stderr)
+        return None
 
 # --- ROUTES ---
 @app.route('/api/sync', methods=['POST'])
@@ -147,34 +153,22 @@ def sync_data():
             cursor.execute(f"UPDATE users SET faction_id = {param} WHERE id = {param}", (faction_id, user_id)); session['faction_id'] = faction_id
         
         relationship_data = fetch_api_data(RELATIONSHIPS_API_URL, api_key)
-        
-        # --- NEW DEBUG LOGS ---
-        print("\n--- RELATIONSHIP SYNC DEBUG ---", file=sys.stderr)
-        print(f"Syncing for faction: '{faction_name}' (DB ID: {faction_id})", file=sys.stderr)
-        
         if relationship_data:
             cursor.execute(f"DELETE FROM faction_relationships WHERE faction_a_id = {param} OR faction_b_id = {param}", (faction_id, faction_id))
-            print("1. Cleared old relationships from DB.", file=sys.stderr)
             
             all_relationships_from_api = []
             
             alliance_data = relationship_data.get('alliance', {})
-            war_data = relationship_data.get('war', [])
-            
-            print(f"2. RAW ALLIANCE DATA: {alliance_data}", file=sys.stderr)
-            print(f"3. RAW WAR DATA: {war_data}", file=sys.stderr)
-
             if isinstance(alliance_data, dict):
                 for item in alliance_data.values():
                     if item.get('faction_name'):
                         all_relationships_from_api.append({'name': item['faction_name'], 'status': 'allied'})
-            
+
+            war_data = relationship_data.get('war', [])
             if isinstance(war_data, list):
                 for item in war_data:
                     if item.get('faction_name'):
                         all_relationships_from_api.append({'name': item['faction_name'], 'status': 'war'})
-            
-            print(f"4. Total relationships prepared for DB: {len(all_relationships_from_api)}", file=sys.stderr)
             
             for rel in all_relationships_from_api:
                 if rel['name'] == faction_name:
@@ -197,16 +191,8 @@ def sync_data():
                     cursor.execute(f"INSERT INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES ({param}, {param}, {param}) ON CONFLICT DO NOTHING", (fac_a, fac_b, rel['status']))
                 else:
                     cursor.execute("INSERT OR IGNORE INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES (?, ?, ?)", (fac_a, fac_b, rel['status']))
-        else:
-            print("1. No relationship data found from API.", file=sys.stderr)
-
-        print("--- END DEBUG ---\n", file=sys.stderr)
-        # --- End of relationship sync ---
 
         current_system_data = fetch_api_data(CURRENT_SYSTEM_API_URL, api_key)
-        # ... (rest of sync logic is unchanged) ...
-        # ... I am providing the full file below to ensure completeness.
-        
         systems_data = fetch_api_data(SYSTEMS_API_URL, api_key)
         wormholes_data = fetch_api_data(WORMHOLE_API_URL, api_key)
         structures_data = fetch_api_data(STRUCTURES_API_URL, api_key)
@@ -224,6 +210,7 @@ def sync_data():
             for wh in stable_wormholes:
                 if wh['from_system_id'] not in all_systems: all_systems[wh['from_system_id']] = {'system_id': wh['from_system_id'], 'system_name': wh['from_system_name'], 'system_position': wh['from_system_position']}
                 if wh['to_system_id'] not in all_systems: all_systems[wh['to_system_id']] = {'system_id': wh['to_system_id'], 'system_name': wh['to_system_name'], 'system_position': wh['to_system_position']}
+        
         if all_systems:
             systems_to_insert = [(s['system_id'], s.get('system_name') or f"System {s['system_id']}", *get_spiral_coords(s.get('system_position')), s.get('system_position')) for s in all_systems.values()]
             if pg_compat: cursor.executemany(f'INSERT INTO systems (id, name, x, y, position) VALUES ({param}, {param}, {param}, {param}, {param}) ON CONFLICT(id) DO NOTHING', systems_to_insert)
@@ -525,18 +512,25 @@ def calculate_path():
     while current_node is not None: full_path_ids.append(current_node); current_node, _ = predecessors.get(current_node, (None, None))
     full_path_ids.reverse()
     if not full_path_ids or full_path_ids[0] != start_id: return jsonify({'path': [], 'distance': None})
+    
+    # --- FIX IS HERE ---
     path_for_json = []
     for sys_id in full_path_ids:
         node_data = systems_map[sys_id]
         path_for_json.append({'id': sys_id, 'name': node_data['name'], 'x': node_data['x'], 'y': node_data['y'], 'position': node_data['position']})
-    if len(full_path_ids) <= 1: return jsonify({'path': path_for_json, 'simple_path': [], 'distance': total_distance})
-    simple_path = []; current_leg_start_node = full_path_ids[0]; _, current_method = predecessors[full_path_ids[1]]
-    for i in range(1, len(full_path_ids)):
-        prev_node = full_path_ids[i-1]; current_node = full_path_ids[i]; _, step_method = predecessors[current_node]
-        if step_method != current_method:
-            simple_path.append({'from_id': current_leg_start_node, 'to_id': prev_node, 'method': current_method}); current_leg_start_node = prev_node; current_method = step_method
-    simple_path.append({'from_id': current_leg_start_node, 'to_id': full_path_ids[-1], 'method': current_method})
-    return jsonify({'path': path_for_json, 'simple_path': simple_path, 'distance': total_distance})
+
+    if len(full_path_ids) <= 1:
+        return jsonify({'path': path_for_json, 'detailed_path': [], 'distance': total_distance})
+
+    detailed_path = []
+    for i in range(len(full_path_ids) - 1):
+        from_node = full_path_ids[i]
+        to_node = full_path_ids[i+1]
+        _, method = predecessors[to_node]
+        detailed_path.append({'from_id': from_node, 'to_id': to_node, 'method': method})
+    
+    return jsonify({'path': path_for_json, 'detailed_path': detailed_path, 'distance': total_distance})
+
 
 # This call ensures the database is set up when the app starts.
 setup_database_if_needed()
