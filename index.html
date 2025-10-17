@@ -40,14 +40,6 @@
             50% { transform: translateY(-10px); }
             100% { transform: translateY(0px); }
         }
-        /* Animation for flashing new systems */
-        @keyframes flash {
-            0%, 100% { box-shadow: 0 0 12px 6px rgba(250, 204, 21, 0.7); }
-            50% { box-shadow: 0 0 6px 3px rgba(250, 204, 21, 0.3); }
-        }
-        .flash-node {
-            animation: flash 1.5s ease-in-out;
-        }
     </style>
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
@@ -105,7 +97,7 @@
     </div>
 
     <div id="map-view" class="hidden flex h-screen overflow-hidden">
-        <aside id="side-panel" class="absolute top-0 left-0 z-20 h-full w-full max-w-sm transform transition-transform duration-300 ease-in-out md:relative md:max-w-xs md:translate-x-0 lg:max-w-sm bg-gray-900 p-6 flex-shrink-0 overflow-y-auto">
+        <aside id="side-panel" class="absolute top-0 left-0 z-20 h-full w-full max-w-sm transform -translate-x-full transition-transform duration-300 ease-in-out md:relative md:max-w-xs md:translate-x-0 lg:max-w-sm bg-gray-900 p-6 flex-shrink-0 overflow-y-auto">
             <div class="space-y-6">
                 <header class="flex items-center justify-between">
                     <div><h1 class="text-2xl font-bold text-white">Galactic Star Map</h1><p id="welcome-message" class="text-sm text-gray-400"></p></div>
@@ -158,7 +150,7 @@
         </aside>
 
         <main class="relative flex-grow flex items-center justify-center">
-            <button id="menu-button" class="md:hidden absolute top-4 left-4 z-30 p-2 bg-gray-800 text-white rounded-md flex items-center space-x-2" title="Toggle Menu" aria-label="Toggle map controls panel" aria-controls="side-panel" aria-expanded="true">
+            <button id="menu-button" class="md:hidden absolute top-4 left-4 z-30 p-2 bg-gray-800 text-white rounded-md flex items-center space-x-2" title="Toggle Menu" aria-label="Toggle map controls panel" aria-controls="side-panel" aria-expanded="false">
                 <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
                 <span class="text-sm">Toggle Controls</span>
             </button>
@@ -174,8 +166,6 @@
         let showUnclaimedNames = false;
         let highlightedCatapultSystemId = null;
         let longPressTimer; let initialTouchDistance = null;
-
-        // NEW: State variables for new features
         let newlySyncedSystemIds = new Set();
         let highlightedSearchSystemId = null;
         let filterShowCatapults = true;
@@ -196,7 +186,6 @@
             resetViewButton: document.getElementById('reset-view-button'), toggleUnclaimedNames: document.getElementById('toggle-unclaimed-names'),
             sidePanel: document.getElementById('side-panel'),
             menuButton: document.getElementById('menu-button'),
-            // NEW DOM elements
             searchForm: document.getElementById('search-form'),
             searchInput: document.getElementById('search-input'),
             filterCatapults: document.getElementById('filter-catapults'),
@@ -218,7 +207,7 @@
                 const d = await r.json(); 
                 dom.syncStatus.textContent = d.message; 
                 if (r.ok) {
-                    await fetchMapData(false, oldSystemIds); // Pass old IDs to fetchMapData
+                    await fetchMapData(false, oldSystemIds);
                 }
             } catch (e) { 
                 dom.syncStatus.textContent = 'Error: Could not connect.'; 
@@ -242,7 +231,6 @@
                 populateDataList(); 
                 if (shouldFit) { fitMapToView(); }
                 
-                // Visual Sync Feedback logic
                 if (oldSystemIds) {
                     newlySyncedSystemIds.clear();
                     Object.keys(systems).forEach(id => {
@@ -254,7 +242,7 @@
                         setTimeout(() => {
                             newlySyncedSystemIds.clear();
                             drawMap();
-                        }, 2000); // Highlight lasts for 2 seconds
+                        }, 2000);
                     }
                 }
                 drawMap();
@@ -333,7 +321,7 @@
             dom.sidePanel.classList.toggle('-translate-x-full');
             dom.menuButton.setAttribute('aria-expanded', !isExpanded);
         }
-        
+
         function clearRouteDisplay() { calculatedPathNodes = []; dom.routeDetailsContainer.innerHTML = ''; dom.startSystemInput.value = ''; dom.endSystemInput.value = ''; drawMap(); }
         function resizeCanvas() { if(dom.canvas.parentElement.clientWidth > 0){ dom.canvas.width = dom.canvas.clientWidth; dom.canvas.height = dom.canvas.clientHeight; if(dom.canvas.width > 0) drawMap(); } }
         function fitMapToView() { if (Object.keys(systems).length === 0) return; let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity; Object.values(systems).forEach(s => { minX=Math.min(minX,s.x); maxX=Math.max(maxX,s.x); minY=Math.min(minY,s.y); maxY=Math.max(maxY,s.y); }); const mapW=maxX-minX, mapH=maxY-minY, mapCX=minX+mapW/2, mapCY=minY+mapH/2; const scale=Math.min(dom.canvas.width/(mapW*1.2), dom.canvas.height/(mapH*1.2))||1; viewTransform = { scale, translateX: (dom.canvas.width/2)-(mapCX*scale), translateY: (dom.canvas.height/2)-(mapCY*scale) }; localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform));}
@@ -351,14 +339,17 @@
             if (filterShowCatapults) {
                 Object.values(systems).forEach(sys => { 
                     if (typeof sys.position !== 'number' || !sys.catapult_radius || sys.catapult_radius <= 0) return;
-                    let rangeColor = 'rgba(132, 204, 22, 0.3)';
-                    if (highlightedCatapultSystemId !== null) { rangeColor = (sys.id === highlightedCatapultSystemId) ? 'rgba(163, 230, 57, 0.9)' : 'rgba(132, 204, 22, 0.05)'; }
-                    ctx.strokeStyle = rangeColor; ctx.lineWidth = 2 / viewTransform.scale;
-                    const startPos = sys.position - sys.catapult_radius; const endPos = sys.position + sys.catapult_radius;
-                    const step = 1; 
-                    ctx.beginPath(); ctx.moveTo(getSpiralPoint(startPos).x, getSpiralPoint(startPos).y);
-                    for (let pos = startPos + step; pos < endPos; pos += step) { ctx.lineTo(getSpiralPoint(pos).x, getSpiralPoint(pos).y); }
-                    ctx.lineTo(getSpiralPoint(endPos).x, getSpiralPoint(endPos).y); ctx.stroke();
+                    const isToggled = toggledCatapultIds.has(String(sys.id));
+                    if (!isToggled) { // Simplified logic
+                        let rangeColor = 'rgba(132, 204, 22, 0.3)';
+                        if (highlightedCatapultSystemId !== null) { rangeColor = (sys.id === highlightedCatapultSystemId) ? 'rgba(163, 230, 57, 0.9)' : 'rgba(132, 204, 22, 0.05)'; }
+                        ctx.strokeStyle = rangeColor; ctx.lineWidth = 2 / viewTransform.scale;
+                        const startPos = sys.position - sys.catapult_radius; const endPos = sys.position + sys.catapult_radius;
+                        const step = 1; 
+                        ctx.beginPath(); ctx.moveTo(getSpiralPoint(startPos).x, getSpiralPoint(startPos).y);
+                        for (let pos = startPos + step; pos < endPos; pos += step) { ctx.lineTo(getSpiralPoint(pos).x, getSpiralPoint(pos).y); }
+                        ctx.lineTo(getSpiralPoint(endPos).x, getSpiralPoint(endPos).y); ctx.stroke();
+                    }
                 });
             }
 
@@ -399,7 +390,7 @@
                 ctx.fill();
 
                 if (isNewlySynced) {
-                    ctx.strokeStyle = 'rgba(250, 204, 21, 0.9)'; // Flashing yellow
+                    ctx.strokeStyle = 'rgba(250, 204, 21, 0.9)';
                     ctx.lineWidth = 3 / viewTransform.scale;
                     ctx.stroke();
                 }
@@ -591,21 +582,20 @@
                 const startId = parseInput(startVal);
                 const endId = parseInput(endVal);
                 if (startId && endId) { findPath(startId, endId); } 
-                else { dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Could not find one or both locations.</p>`; }
+                else { dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Could not find one or both locations. Please use a known system name or format coordinates as #123.45</p>`; }
             });
 
             dom.searchForm.addEventListener('submit', (e) => {
                 e.preventDefault();
                 const query = dom.searchInput.value.trim().toLowerCase();
-                const foundSystem = Object.values(systems).find(s => s.name.toLowerCase() === query || `#${s.position}` === query);
+                const foundSystem = Object.values(systems).find(s => s.name.toLowerCase() === query || `#${s.position}` === query.toLowerCase());
                 if (foundSystem) {
-                    viewTransform.scale = 1.5; // Zoom in
+                    viewTransform.scale = 1.5;
                     viewTransform.translateX = (dom.canvas.width / 2) - (foundSystem.x * viewTransform.scale);
                     viewTransform.translateY = (dom.canvas.height / 2) - (foundSystem.y * viewTransform.scale);
                     
                     highlightedSearchSystemId = foundSystem.id;
                     drawMap();
-                    // Remove highlight after a moment
                     setTimeout(() => {
                         highlightedSearchSystemId = null;
                         drawMap();
