@@ -4,10 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Panel - Galactic Star Map</title>
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
-    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
-    <link rel="manifest" href="/site.webmanifest">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { background-color: #111827; color: #d1d5db; font-family: 'Inter', sans-serif; }
@@ -123,8 +119,23 @@
             systems.forEach(system => {
                 const row = document.createElement('tr');
                 row.dataset.systemId = system.id;
+                
+                // --- FIX IS HERE ---
+                // Check if the name is a default "System xxxx" name
+                const displayName = system.name.startsWith("System ") ? `#${system.position}` : system.name;
+                const nameColor = system.name.startsWith("System ") ? "text-gray-400" : "text-white";
+                
                 const ownerSelect = `<select class="w-full bg-gray-700 rounded-md py-1 px-2 text-white owner-select"><option value="0">None</option>${allFactions.map(f => `<option value="${f.id}" ${system.owner_faction_id === f.id ? 'selected' : ''}>${f.name}</option>`).join('')}</select>`;
-                row.innerHTML = `<td class="px-4 py-4 text-sm"><div class="font-medium text-white">${system.name}</div><div class="text-gray-400">${system.id}</div></td><td class="px-4 py-4"><input type="number" value="${system.catapult_radius}" class="w-24 bg-gray-700 rounded-md py-1 px-2 text-white radius-input"></td><td class="px-4 py-4">${ownerSelect}</td><td class="px-4 py-4 text-right"><button class="text-indigo-400 hover:text-indigo-300 save-btn">Save</button></td>`;
+                
+                row.innerHTML = `
+                    <td class="px-4 py-4 text-sm">
+                        <div class="font-medium ${nameColor}">${displayName}</div>
+                        <div class="text-gray-400">${system.id}</div>
+                    </td>
+                    <td class="px-4 py-4"><input type="number" value="${system.catapult_radius}" class="w-24 bg-gray-700 rounded-md py-1 px-2 text-white radius-input"></td>
+                    <td class="px-4 py-4">${ownerSelect}</td>
+                    <td class="px-4 py-4 text-right"><button class="text-indigo-400 hover:text-indigo-300 save-btn">Save</button></td>`;
+                
                 dom.systemsTableBody.appendChild(row);
             });
         };
@@ -197,8 +208,6 @@
             const username = document.getElementById('dev-username-input').value.trim();
             if (!username) { dom.devStatus.textContent = 'Please enter a username.'; return; }
             dom.devStatus.textContent = 'Promoting...';
-            // Note: This endpoint is not defined in the provided app.py, but we keep the JS for it.
-            // You would need to add a '/api/admin/promote_developer' route to app.py for this to work.
             try {
                 const r = await apiFetch('/api/admin/promote_developer', {method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: username })});
                 const d = await r.json(); dom.devStatus.textContent = d.message || d.error;
@@ -209,7 +218,7 @@
             setTimeout(() => { dom.devStatus.textContent = '' }, 3000);
         };
 
-        const handleSearch = (e) => { const query = e.target.value.toLowerCase(); const filtered = allSystems.filter(s => String(s.id).includes(query) || s.name.toLowerCase().includes(query)); renderSystemsTable(filtered); };
+        const handleSearch = (e) => { const query = e.target.value.toLowerCase(); const filtered = allSystems.filter(s => String(s.id).includes(query) || s.name.toLowerCase().includes(query) || (s.name.startsWith("System ") && `#${s.position}`.includes(query)) ); renderSystemsTable(filtered); };
         
         const loadAdminData = async () => {
             try {
