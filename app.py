@@ -249,11 +249,33 @@ def sync_data():
             if pg_compat: cursor.executemany(f'INSERT INTO faction_discovered_systems (faction_id, system_id) VALUES ({param}, {param}) ON CONFLICT (faction_id, system_id) DO NOTHING', faction_systems_to_link)
             else: cursor.executemany('INSERT OR IGNORE INTO faction_discovered_systems (faction_id, system_id) VALUES (?, ?)', faction_systems_to_link)
             
+            # --- CORRECTED WORMHOLE LOGIC ---
+            system_ids_in_range = list(all_systems.keys())
+            if system_ids_in_range:
+                # 1. Delete all existing wormholes connected to any system in our sync range
+                if pg_compat:
+                    id_tuple = tuple(system_ids_in_range)
+                    cursor.execute(f"DELETE FROM wormholes WHERE system_a_id IN {param} OR system_b_id IN {param}", (id_tuple, id_tuple))
+                else:
+                    placeholders = ','.join(['?'] * len(system_ids_in_range))
+                    params_list = system_ids_in_range * 2
+                    cursor.execute(f"DELETE FROM wormholes WHERE system_a_id IN ({placeholders}) OR system_b_id IN ({placeholders})", params_list)
+            
+            # 2. Insert the fresh list of wormholes
             if wormholes_data and 'stable' in wormholes_data:
                 stable_wormholes = wormholes_data['stable'].values() if isinstance(wormholes_data['stable'], dict) else wormholes_data['stable']
-                wormholes_to_insert = [(min(wh['from_system_id'], wh['to_system_id']), max(wh['from_system_id'], wh['to_system_id'])) for wh in stable_wormholes]
-                if pg_compat: cursor.executemany(f'INSERT INTO wormholes (system_a_id, system_b_id) VALUES ({param}, {param}) ON CONFLICT DO NOTHING', wormholes_to_insert)
-                else: cursor.executemany('INSERT OR IGNORE INTO wormholes (system_a_id, system_b_id) VALUES (?, ?)', wormholes_to_insert)
+                wormholes_to_insert = []
+                for wh in stable_wormholes:
+                    # Only add wormholes where we can see both ends in the current sync
+                    if wh['from_system_id'] in system_ids_in_range and wh['to_system_id'] in system_ids_in_range:
+                        wormholes_to_insert.append((min(wh['from_system_id'], wh['to_system_id']), max(wh['from_system_id'], wh['to_system_id'])))
+                
+                if wormholes_to_insert:
+                    if pg_compat: 
+                        cursor.executemany(f'INSERT INTO wormholes (system_a_id, system_b_id) VALUES ({param}, {param}) ON CONFLICT DO NOTHING', wormholes_to_insert)
+                    else: 
+                        cursor.executemany('INSERT OR IGNORE INTO wormholes (system_a_id, system_b_id) VALUES (?, ?)', wormholes_to_insert)
+            # --- END OF WORMHOLE LOGIC ---
         
         conn.commit()
         return jsonify({'message': 'Sync successful!'})
@@ -512,15 +534,11 @@ def calculate_path():
     while current_node is not None: full_path_ids.append(current_node); current_node, _ = predecessors.get(current_node, (None, None))
     full_path_ids.reverse()
     if not full_path_ids or full_path_ids[0] != start_id: return jsonify({'path': [], 'distance': None})
-    
-    # --- FIX IS HERE ---
     path_for_json = []
     for sys_id in full_path_ids:
         node_data = systems_map[sys_id]
         path_for_json.append({'id': sys_id, 'name': node_data['name'], 'x': node_data['x'], 'y': node_data['y'], 'position': node_data['position']})
-
-    if len(full_path_ids) <= 1:
-        return jsonify({'path': path_for_json, 'detailed_path': [], 'distance': total_distance})
+    if len(full_path_ids) <= 1: return jsonify({'path': path_for_json, 'detailed_path': [], 'distance': total_distance})
 
     detailed_path = []
     for i in range(len(full_path_ids) - 1):
