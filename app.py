@@ -128,16 +128,20 @@ def bulk_add_systems(systems_list, faction_id, cursor, pg_compat, param):
     links_to_insert = []
     
     for system_data in systems_list:
-        if not system_data.get('id') or not system_data.get('position'):
+        # Use .get() for safety on all lookups
+        sys_id = system_data.get('system_id')
+        sys_pos = system_data.get('system_position')
+        
+        if not sys_id or not sys_pos:
             continue
         
-        sys_id = int(system_data['id'])
-        sys_pos = float(system_data['position'])
-        sys_name = system_data.get('name') or f"System {sys_id}"
-        x, y = get_spiral_coords(sys_pos)
+        sys_id_int = int(sys_id)
+        sys_pos_float = float(sys_pos)
+        sys_name = system_data.get('system_name') or f"System {sys_id_int}"
+        x, y = get_spiral_coords(sys_pos_float)
         
-        systems_to_insert.append((sys_id, sys_name, x, y, sys_pos))
-        links_to_insert.append((faction_id, sys_id))
+        systems_to_insert.append((sys_id_int, sys_name, x, y, sys_pos_float))
+        links_to_insert.append((faction_id, sys_id_int))
     
     if systems_to_insert:
         if pg_compat:
@@ -366,19 +370,22 @@ def register():
                 
                 # --- CORRECTED LOGIC ---
                 if faction_systems and isinstance(faction_systems, dict):
-                    if 'systems' in faction_systems and isinstance(faction_systems['systems'], list):
-                        for system_data in faction_systems['systems']:
-                            if system_data.get('id'):
-                                all_systems_to_add[system_data['id']] = system_data
-                elif faction_systems and isinstance(faction_systems, list):
-                     for system_data in faction_systems:
-                        if system_data.get('id'):
-                            all_systems_to_add[system_data['id']] = system_data
+                    for system_data in faction_systems.values():
+                        if system_data.get('system_id'):
+                            all_systems_to_add[system_data['system_id']] = {
+                                'id': system_data['system_id'],
+                                'name': system_data.get('system_name'),
+                                'position': system_data.get('system_position')
+                            }
 
-                if poi_systems and isinstance(poi_systems, list):
-                    for system_data in poi_systems:
-                        if system_data.get('id'):
-                            all_systems_to_add[system_data['id']] = system_data
+                if poi_systems and isinstance(poi_systems, dict):
+                    for system_data in poi_systems.values():
+                        if system_data.get('system_id'):
+                            all_systems_to_add[system_data['system_id']] = {
+                                'id': system_data['system_id'],
+                                'name': system_data.get('system_name'),
+                                'position': system_data.get('system_position')
+                            }
                 # --- END CORRECTION ---
 
                 count = bulk_add_systems(all_systems_to_add.values(), faction_id, cursor_bulk, pg_compat_bulk, param_bulk)
@@ -426,20 +433,22 @@ def bulk_sync_faction_systems():
         
         # --- CORRECTED LOGIC ---
         if faction_systems and isinstance(faction_systems, dict):
-            if 'systems' in faction_systems and isinstance(faction_systems['systems'], list):
-                for system_data in faction_systems['systems']: # <-- Renamed 'sys' to 'system_data'
-                    if system_data.get('id'):
-                        all_systems_to_add[system_data['id']] = system_data
-            # --- FIX: Correct indentation ---
-            elif isinstance(faction_systems, list):
-                 for system_data in faction_systems:
-                    if system_data.get('id'):
-                        all_systems_to_add[system_data['id']] = system_data
-        
-        if poi_systems and isinstance(poi_systems, list):
-            for system_data in poi_systems: # <-- Renamed 'sys' to 'system_data'
-                if system_data.get('id'):
-                    all_systems_to_add[system_data['id']] = system_data
+            for system_data in faction_systems.values():
+                if system_data.get('system_id'):
+                    all_systems_to_add[system_data['system_id']] = {
+                        'id': system_data['system_id'],
+                        'name': system_data.get('system_name'),
+                        'position': system_data.get('system_position')
+                    }
+
+        if poi_systems and isinstance(poi_systems, dict):
+            for system_data in poi_systems.values():
+                if system_data.get('system_id'):
+                    all_systems_to_add[system_data['system_id']] = {
+                        'id': system_data['system_id'],
+                        'name': system_data.get('system_name'),
+                        'position': system_data.get('system_position')
+                    }
         # --- END CORRECTION ---
         
         if not all_systems_to_add:
