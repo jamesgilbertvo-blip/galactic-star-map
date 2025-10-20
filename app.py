@@ -32,8 +32,8 @@ STRUCTURES_API_URL = "https://play.textspaced.com/api/system/structures/"
 CURRENT_SYSTEM_API_URL = "https://play.textspaced.com/api/system/"
 FACTION_API_URL = "https://play.textspaced.com/api/faction/info/"
 RELATIONSHIPS_API_URL = "https://play.textspaced.com/api/faction/karma/all/"
-FACTION_SYSTEMS_API_URL = "https://play.textspaced.com/api/faction/systems/"
-POI_API_URL = "https://play.textspaced.com/api/lookup/points_of_interest/"
+FACTION_SYSTEMS_API_URL = "https://play.textspaced.com/api/faction/systems/" # <-- NEW
+POI_API_URL = "https://play.textspaced.com/api/lookup/points_of_interest/" # <-- NEW
 
 
 # --- DATABASE CONNECTION & SETUP ---
@@ -388,6 +388,7 @@ def register():
     finally: 
         if conn: conn.close()
 
+# --- NEW ENDPOINT for bulk sync ---
 @app.route('/api/bulk_sync_faction_systems', methods=['POST'])
 def bulk_sync_faction_systems():
     if 'user_id' not in session or session.get('is_developer'):
