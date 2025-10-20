@@ -177,7 +177,7 @@
         let highlightedSearchSystemId = null;
         let filterShowCatapults = true;
         let filterShowWormholes = true;
-        let showBulkSyncButton = false; // NEW: State for bulk sync button
+        let showBulkSyncButton = false;
 
         const dom = { 
             loginView: document.getElementById('login-view'), mapView: document.getElementById('map-view'), registerView: document.getElementById('register-view'), 
@@ -198,7 +198,7 @@
             searchInput: document.getElementById('search-input'),
             filterCatapults: document.getElementById('filter-catapults'),
             filterWormholes: document.getElementById('filter-wormholes'),
-            bulkSyncButton: document.getElementById('bulk-sync-button') // NEW: Bulk sync button
+            bulkSyncButton: document.getElementById('bulk-sync-button')
         };
 
         const apiFetch = (url, options = {}) => { options.credentials = 'include'; return fetch(url, options); };
@@ -226,7 +226,6 @@
             } 
         };
 
-        // NEW: Handler for the bulk sync button
         const handleBulkSync = async (e) => {
             e.preventDefault();
             dom.profileStatus.textContent = 'Importing... this may take a moment.';
@@ -237,9 +236,9 @@
                 if (!r.ok) throw new Error(d.error || 'Failed to import.');
                 
                 dom.profileStatus.textContent = d.message;
-                showBulkSyncButton = false; // Hide button permanently after successful use
+                showBulkSyncButton = false;
                 dom.bulkSyncButton.classList.add('hidden');
-                await fetchMapData(false); // Refresh the map
+                await fetchMapData(false);
                 setTimeout(closeProfile, 2000);
 
             } catch (e) {
@@ -256,7 +255,6 @@
             dom.apiKeyInput.value = d.api_key_set ? '(Key is set and encrypted)' : ''; 
             dom.apiKeyInput.placeholder = d.api_key_set ? 'Enter a new key to overwrite' : 'Enter your game API key'; 
             
-            // NEW: Show/hide bulk sync button
             if (showBulkSyncButton) {
                 dom.bulkSyncButton.classList.remove('hidden');
                 dom.bulkSyncButton.disabled = false;
@@ -302,12 +300,9 @@
         function showLoginView() { dom.mapView.classList.add('hidden'); dom.registerView.classList.add('hidden'); dom.loginView.classList.remove('hidden'); }
         function showRegisterView() { dom.mapView.classList.add('hidden'); dom.loginView.classList.add('hidden'); dom.registerView.classList.remove('hidden'); }
         
-        // UPDATED: Function now takes the full data object
         function showMapView(data, isNewRegistration = false) {
             dom.loginView.classList.add('hidden'); dom.registerView.classList.add('hidden'); dom.mapView.classList.remove('hidden');
             dom.welcomeMessage.textContent = `Welcome, ${data.username}`;
-            
-            // NEW: Store the bulk sync flag
             showBulkSyncButton = data.show_bulk_sync || false;
 
             let adminBtn = document.getElementById('admin-button');
@@ -661,6 +656,10 @@
 
             dom.filterCatapults.addEventListener('change', (e) => { filterShowCatapults = e.target.checked; drawMap(); });
             dom.filterWormholes.addEventListener('change', (e) => { filterShowWormholes = e.target.checked; drawMap(); });
+            
+            // --- FIX IS HERE ---
+            // The missing event listener for the new button
+            dom.bulkSyncButton.addEventListener('click', handleBulkSync);
 
             dom.startSystemInput.addEventListener('focus', () => { activeRouteInput = dom.startSystemInput; });
             dom.endSystemInput.addEventListener('focus', () => { activeRouteInput = dom.endSystemInput; });
