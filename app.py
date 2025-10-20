@@ -32,8 +32,8 @@ STRUCTURES_API_URL = "https://play.textspaced.com/api/system/structures/"
 CURRENT_SYSTEM_API_URL = "https://play.textspaced.com/api/system/"
 FACTION_API_URL = "https://play.textspaced.com/api/faction/info/"
 RELATIONSHIPS_API_URL = "https://play.textspaced.com/api/faction/karma/all/"
-FACTION_SYSTEMS_API_URL = "https://play.textspaced.com/api/faction/systems/" # <-- NEW
-POI_API_URL = "https://play.textspaced.com/api/lookup/points_of_interest/" # <-- NEW
+FACTION_SYSTEMS_API_URL = "https://play.textspaced.com/api/faction/systems/"
+POI_API_URL = "https://play.textspaced.com/api/lookup/points_of_interest/"
 
 
 # --- DATABASE CONNECTION & SETUP ---
@@ -129,13 +129,13 @@ def bulk_add_systems(systems_list, faction_id, cursor, pg_compat, param):
     systems_to_insert = []
     links_to_insert = []
     
-    for system in systems_list:
-        if not system.get('id') or not system.get('position'):
+    for system_data in systems_list: # Renamed variable to avoid shadowing 'sys' module
+        if not system_data.get('id') or not system_data.get('position'):
             continue
         
-        sys_id = int(system['id'])
-        sys_pos = float(system['position'])
-        sys_name = system.get('name') or f"System {sys_id}"
+        sys_id = int(system_data['id'])
+        sys_pos = float(system_data['position'])
+        sys_name = system_data.get('name') or f"System {sys_id}"
         x, y = get_spiral_coords(sys_pos)
         
         systems_to_insert.append((sys_id, sys_name, x, y, sys_pos))
@@ -366,10 +366,24 @@ def register():
                 faction_systems = fetch_api_data(FACTION_SYSTEMS_API_URL, api_key)
                 poi_systems = fetch_api_data(POI_API_URL, api_key)
                 
-                if faction_systems:
-                    for sys in faction_systems: all_systems_to_add[sys['id']] = sys
-                if poi_systems:
-                    for sys in poi_systems: all_systems_to_add[sys['id']] = sys
+                # --- CORRECTED LOGIC ---
+                if faction_systems and isinstance(faction_systems, dict):
+                    # Check for a nested list, e.g., {"systems": [...]}
+                    if 'systems' in faction_systems and isinstance(faction_systems['systems'], list):
+                        for system_data in faction_systems['systems']:
+                            if system_data.get('id'):
+                                all_systems_to_add[system_data['id']] = system_data
+                    # Handle flat list as fallback
+                    elif isinstance(faction_systems, list):
+                         for system_data in faction_systems:
+                            if system_data.get('id'):
+                                all_systems_to_add[system_data['id']] = system_data
+
+                if poi_systems and isinstance(poi_systems, list):
+                    for system_data in poi_systems:
+                        if system_data.get('id'):
+                            all_systems_to_add[system_data['id']] = system_data
+                # --- END CORRECTION ---
 
                 count = bulk_add_systems(all_systems_to_add.values(), faction_id, cursor_bulk, pg_compat_bulk, param_bulk)
                 conn_bulk.commit()
@@ -388,7 +402,6 @@ def register():
     finally: 
         if conn: conn.close()
 
-# --- NEW ENDPOINT for bulk sync ---
 @app.route('/api/bulk_sync_faction_systems', methods=['POST'])
 def bulk_sync_faction_systems():
     if 'user_id' not in session or session.get('is_developer'):
@@ -415,10 +428,24 @@ def bulk_sync_faction_systems():
         faction_systems = fetch_api_data(FACTION_SYSTEMS_API_URL, api_key)
         poi_systems = fetch_api_data(POI_API_URL, api_key)
         
-        if faction_systems:
-            for sys in faction_systems: all_systems_to_add[sys['id']] = sys
-        if poi_systems:
-            for sys in poi_systems: all_systems_to_add[sys['id']] = sys
+        # --- CORRECTED LOGIC ---
+        if faction_systems and isinstance(faction_systems, dict):
+            # Check for a nested list, e.g., {"systems": [...]}
+            if 'systems' in faction_systems and isinstance(faction_systems['systems'], list):
+                for system_data in faction_systems['systems']:
+                    if system_data.get('id'):
+                        all_systems_to_add[system_data['id']] = system_data
+            # Handle flat list as fallback
+            elif isinstance(faction_systems, list):
+                    for system_data in faction_systems:
+                    if system_data.get('id'):
+                        all_systems_to_add[system_data['id']] = system_data
+        
+        if poi_systems and isinstance(poi_systems, list):
+            for system_data in poi_systems:
+                if system_data.get('id'):
+                    all_systems_to_add[system_data['id']] = system_data
+        # --- END CORRECTION ---
         
         if not all_systems_to_add:
             return jsonify({'error': 'Failed to fetch any systems from the API.'}), 500
@@ -449,8 +476,8 @@ def login():
         cursor.execute(f"SELECT COUNT(*) as count FROM faction_discovered_systems WHERE faction_id = {param}", (faction_id,))
         system_count = cursor.fetchone()['count']
         
-        # --- Production Logic ---
-        show_bulk_sync = (system_count < 99999) and not user.get('is_developer', False)
+        # --- TEMPORARY TEST FIX: Change < 20 to a large number ---
+        show_bulk_sync = (system_count < 999999) and not user.get('is_developer', False)
         
         conn.close()
         return jsonify({
@@ -488,8 +515,8 @@ def status():
         cursor.execute(f"SELECT COUNT(*) as count FROM faction_discovered_systems WHERE faction_id = {param}", (faction_id,))
         system_count = cursor.fetchone()['count']
         
-        # --- Production Logic ---
-        show_bulk_sync = (system_count < 99999) and not is_developer
+        # --- TEMPORARY TEST FIX: Change < 20 to a large number ---
+        show_bulk_sync = (system_count < 999999) and not is_developer
         
         conn.close()
         return jsonify({
