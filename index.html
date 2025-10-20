@@ -658,7 +658,6 @@
             dom.filterWormholes.addEventListener('change', (e) => { filterShowWormholes = e.target.checked; drawMap(); });
             
             // --- FIX IS HERE ---
-            // The missing event listener for the new button
             dom.bulkSyncButton.addEventListener('click', handleBulkSync);
 
             dom.startSystemInput.addEventListener('focus', () => { activeRouteInput = dom.startSystemInput; });

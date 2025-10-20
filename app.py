@@ -449,8 +449,8 @@ def login():
         cursor.execute(f"SELECT COUNT(*) as count FROM faction_discovered_systems WHERE faction_id = {param}", (faction_id,))
         system_count = cursor.fetchone()['count']
         
-        # --- TEMPORARY TEST FIX: Change < 20 to a large number ---
-        show_bulk_sync = (system_count < 999999) and not user.get('is_developer', False)
+        # --- Production Logic ---
+        show_bulk_sync = (system_count < 99999) and not user.get('is_developer', False)
         
         conn.close()
         return jsonify({
@@ -488,8 +488,8 @@ def status():
         cursor.execute(f"SELECT COUNT(*) as count FROM faction_discovered_systems WHERE faction_id = {param}", (faction_id,))
         system_count = cursor.fetchone()['count']
         
-        # --- TEMPORARY TEST FIX: Change < 20 to a large number ---
-        show_bulk_sync = (system_count < 999999) and not is_developer
+        # --- Production Logic ---
+        show_bulk_sync = (system_count < 99999) and not is_developer
         
         conn.close()
         return jsonify({
