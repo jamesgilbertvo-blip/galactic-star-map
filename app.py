@@ -120,16 +120,14 @@ def fetch_api_data(url, api_key):
         print(f"API request failed for {url}: {e}", file=sys.stderr)
         return None
 
-# --- NEW HELPER FUNCTION ---
 def bulk_add_systems(systems_list, faction_id, cursor, pg_compat, param):
-    """Helper to bulk-add systems and link them to a faction."""
     if not systems_list:
         return 0
     
     systems_to_insert = []
     links_to_insert = []
     
-    for system_data in systems_list: # Renamed variable to avoid shadowing 'sys' module
+    for system_data in systems_list:
         if not system_data.get('id') or not system_data.get('position'):
             continue
         
@@ -368,16 +366,14 @@ def register():
                 
                 # --- CORRECTED LOGIC ---
                 if faction_systems and isinstance(faction_systems, dict):
-                    # Check for a nested list, e.g., {"systems": [...]}
                     if 'systems' in faction_systems and isinstance(faction_systems['systems'], list):
                         for system_data in faction_systems['systems']:
                             if system_data.get('id'):
                                 all_systems_to_add[system_data['id']] = system_data
-                    # Handle flat list as fallback
-                    elif isinstance(faction_systems, list):
-                         for system_data in faction_systems:
-                            if system_data.get('id'):
-                                all_systems_to_add[system_data['id']] = system_data
+                elif faction_systems and isinstance(faction_systems, list):
+                     for system_data in faction_systems:
+                        if system_data.get('id'):
+                            all_systems_to_add[system_data['id']] = system_data
 
                 if poi_systems and isinstance(poi_systems, list):
                     for system_data in poi_systems:
@@ -430,19 +426,18 @@ def bulk_sync_faction_systems():
         
         # --- CORRECTED LOGIC ---
         if faction_systems and isinstance(faction_systems, dict):
-            # Check for a nested list, e.g., {"systems": [...]}
             if 'systems' in faction_systems and isinstance(faction_systems['systems'], list):
-                for system_data in faction_systems['systems']:
+                for system_data in faction_systems['systems']: # <-- Renamed 'sys' to 'system_data'
                     if system_data.get('id'):
                         all_systems_to_add[system_data['id']] = system_data
-            # Handle flat list as fallback
+            # --- FIX: Correct indentation ---
             elif isinstance(faction_systems, list):
-                    for system_data in faction_systems:
+                 for system_data in faction_systems:
                     if system_data.get('id'):
                         all_systems_to_add[system_data['id']] = system_data
         
         if poi_systems and isinstance(poi_systems, list):
-            for system_data in poi_systems:
+            for system_data in poi_systems: # <-- Renamed 'sys' to 'system_data'
                 if system_data.get('id'):
                     all_systems_to_add[system_data['id']] = system_data
         # --- END CORRECTION ---
