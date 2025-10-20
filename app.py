@@ -58,7 +58,7 @@ def setup_database_if_needed():
         user_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
         faction_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
 
-        cursor.execute(f'CREATE TABLE factions (id {faction_id_type}, name TEXT UNIQUE NOT NULL)')
+        cursor.execute(f'CREATE TABLE factions (id {faction_id_type}, name TEXT UNIQUE NOT NULL, initial_import_done BOOLEAN DEFAULT FALSE NOT NULL)')
         cursor.execute(f'''
         CREATE TABLE users (
             id {user_id_type},
@@ -128,7 +128,7 @@ def bulk_add_systems(systems_list, faction_id, cursor, pg_compat, param):
     links_to_insert = []
     
     for system_data in systems_list:
-        # Use .get() for safety on all lookups
+        # --- FIX #1: Use the correct keys from the API ---
         sys_id = system_data.get('system_id')
         sys_pos = system_data.get('system_position')
         
@@ -336,9 +336,10 @@ def register():
         cursor.execute("SELECT id FROM users LIMIT 1"); is_first_user = cursor.fetchone() is None
         is_admin_flag = True if is_first_user else False
         
-        cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (faction_name,)); faction = cursor.fetchone()
+        cursor.execute(f"SELECT id, initial_import_done FROM factions WHERE name = {param}", (faction_name,)); faction = cursor.fetchone()
         if faction: 
             faction_id = faction['id']
+            # Check if this is the first user for this faction
             cursor.execute(f"SELECT id FROM users WHERE faction_id = {param} LIMIT 1", (faction_id,))
             if cursor.fetchone() is None:
                 is_first_user_of_faction = True
@@ -373,22 +374,25 @@ def register():
                     for system_data in faction_systems.values():
                         if system_data.get('system_id'):
                             all_systems_to_add[system_data['system_id']] = {
-                                'id': system_data['system_id'],
-                                'name': system_data.get('system_name'),
-                                'position': system_data.get('system_position')
+                                'system_id': system_data['system_id'],
+                                'system_name': system_data.get('system_name'),
+                                'system_position': system_data.get('system_position')
                             }
 
                 if poi_systems and isinstance(poi_systems, dict):
                     for system_data in poi_systems.values():
                         if system_data.get('system_id'):
                             all_systems_to_add[system_data['system_id']] = {
-                                'id': system_data['system_id'],
-                                'name': system_data.get('system_name'),
-                                'position': system_data.get('system_position')
+                                'system_id': system_data['system_id'],
+                                'system_name': system_data.get('system_name'),
+                                'system_position': system_data.get('system_position')
                             }
                 # --- END CORRECTION ---
 
                 count = bulk_add_systems(all_systems_to_add.values(), faction_id, cursor_bulk, pg_compat_bulk, param_bulk)
+                
+                # --- FIX #2: Set the flag after import ---
+                cursor_bulk.execute(f"UPDATE factions SET initial_import_done = TRUE WHERE id = {param_bulk}", (faction_id,))
                 conn_bulk.commit()
                 conn_bulk.close()
                 print(f"Bulk import complete. Added {count} systems for faction {faction_id}.")
@@ -436,18 +440,18 @@ def bulk_sync_faction_systems():
             for system_data in faction_systems.values():
                 if system_data.get('system_id'):
                     all_systems_to_add[system_data['system_id']] = {
-                        'id': system_data['system_id'],
-                        'name': system_data.get('system_name'),
-                        'position': system_data.get('system_position')
+                        'system_id': system_data['system_id'],
+                        'system_name': system_data.get('system_name'),
+                        'system_position': system_data.get('system_position')
                     }
 
         if poi_systems and isinstance(poi_systems, dict):
             for system_data in poi_systems.values():
                 if system_data.get('system_id'):
                     all_systems_to_add[system_data['system_id']] = {
-                        'id': system_data['system_id'],
-                        'name': system_data.get('system_name'),
-                        'position': system_data.get('system_position')
+                        'system_id': system_data['system_id'],
+                        'system_name': system_data.get('system_name'),
+                        'system_position': system_data.get('system_position')
                     }
         # --- END CORRECTION ---
         
@@ -455,6 +459,10 @@ def bulk_sync_faction_systems():
             return jsonify({'error': 'Failed to fetch any systems from the API.'}), 500
 
         count = bulk_add_systems(all_systems_to_add.values(), faction_id, cursor, pg_compat, param)
+        
+        # --- FIX #2: Set the flag after import ---
+        cursor.execute(f"UPDATE factions SET initial_import_done = TRUE WHERE id = {param}", (faction_id,))
+        
         conn.commit()
         
         return jsonify({'message': f'Successfully imported {count} systems for your faction!'})
@@ -471,17 +479,16 @@ def bulk_sync_faction_systems():
 def login():
     data = request.get_json(); username, password = data.get('username'), data.get('password')
     conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
-    cursor.execute(f"SELECT * FROM users WHERE username = {param}", (username,)); user = cursor.fetchone()
+    
+    # --- FIX #2: Join with factions table to get the new flag ---
+    cursor.execute(f"SELECT u.*, f.initial_import_done FROM users u JOIN factions f ON u.faction_id = f.id WHERE u.username = {param}", (username,)); 
+    user = cursor.fetchone()
     
     if user and user['password'] == password:
         session['user_id'], session['username'], session['faction_id'], session['is_admin'], session['is_developer'] = user['id'], user['username'], user['faction_id'], user['is_admin'], user.get('is_developer', False)
         
-        faction_id = user['faction_id']
-        cursor.execute(f"SELECT COUNT(*) as count FROM faction_discovered_systems WHERE faction_id = {param}", (faction_id,))
-        system_count = cursor.fetchone()['count']
-        
-        # --- TEMPORARY TEST FIX: Change < 20 to a large number ---
-        show_bulk_sync = (system_count < 999999) and not user.get('is_developer', False)
+        # --- FIX #2: Check the new flag ---
+        show_bulk_sync = (not user['initial_import_done']) and not user.get('is_developer', False)
         
         conn.close()
         return jsonify({
@@ -516,11 +523,10 @@ def status():
         faction_id = session['faction_id']
         is_developer = session.get('is_developer', False)
         
-        cursor.execute(f"SELECT COUNT(*) as count FROM faction_discovered_systems WHERE faction_id = {param}", (faction_id,))
-        system_count = cursor.fetchone()['count']
-        
-        # --- TEMPORARY TEST FIX: Change < 20 to a large number ---
-        show_bulk_sync = (system_count < 999999) and not is_developer
+        # --- FIX #2: Check the new flag ---
+        cursor.execute(f"SELECT initial_import_done FROM factions WHERE id = {param}", (faction_id,))
+        faction = cursor.fetchone()
+        show_bulk_sync = (faction and not faction['initial_import_done']) and not is_developer
         
         conn.close()
         return jsonify({

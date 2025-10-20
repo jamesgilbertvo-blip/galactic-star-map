@@ -94,7 +94,7 @@
             </form>
             <div class="border-t border-gray-700 pt-4">
                 <button id="bulk-sync-button" type="button" class="hidden w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md">One-Time Faction System Import</button>
-                <p class="text-xs text-gray-400 text-center mt-2">Populate your map with all known Faction & POI systems. This is only shown once for new factions.</p>
+                <p id="bulk-sync-text" class="hidden text-xs text-gray-400 text-center mt-2">Populate your map with all known Faction & POI systems. This is only shown once for new factions.</p>
             </div>
             <p id="profile-status" class="text-sm text-center h-4" aria-live="assertive"></p>
         </div>
@@ -198,7 +198,8 @@
             searchInput: document.getElementById('search-input'),
             filterCatapults: document.getElementById('filter-catapults'),
             filterWormholes: document.getElementById('filter-wormholes'),
-            bulkSyncButton: document.getElementById('bulk-sync-button')
+            bulkSyncButton: document.getElementById('bulk-sync-button'),
+            bulkSyncText: document.getElementById('bulk-sync-text') // --- FIX #3 ---
         };
 
         const apiFetch = (url, options = {}) => { options.credentials = 'include'; return fetch(url, options); };
@@ -238,6 +239,7 @@
                 dom.profileStatus.textContent = d.message;
                 showBulkSyncButton = false;
                 dom.bulkSyncButton.classList.add('hidden');
+                dom.bulkSyncText.classList.add('hidden'); // --- FIX #3 ---
                 await fetchMapData(false);
                 setTimeout(closeProfile, 2000);
 
@@ -257,9 +259,11 @@
             
             if (showBulkSyncButton) {
                 dom.bulkSyncButton.classList.remove('hidden');
+                dom.bulkSyncText.classList.remove('hidden'); // --- FIX #3 ---
                 dom.bulkSyncButton.disabled = false;
             } else {
                 dom.bulkSyncButton.classList.add('hidden');
+                dom.bulkSyncText.classList.add('hidden'); // --- FIX #3 ---
             }
 
             dom.profileView.classList.remove('hidden'); 
