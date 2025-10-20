@@ -337,14 +337,13 @@ def register():
         cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (faction_name,)); faction = cursor.fetchone()
         if faction: 
             faction_id = faction['id']
-            # Check if this is the first user for this faction
             cursor.execute(f"SELECT id FROM users WHERE faction_id = {param} LIMIT 1", (faction_id,))
             if cursor.fetchone() is None:
                 is_first_user_of_faction = True
         else:
             if pg_compat: cursor.execute(f"INSERT INTO factions (name) VALUES ({param}) RETURNING id", (faction_name,)); faction_id = cursor.fetchone()['id']
             else: cursor.execute("INSERT INTO factions (name) VALUES (?)", (faction_name,)); faction_id = cursor.lastrowid
-            is_first_user_of_faction = True # It's a new faction, so this is definitely the first user
+            is_first_user_of_faction = True
         
         encrypted_api_key = fernet.encrypt(api_key.encode()).decode() if api_key else None
         if pg_compat:
@@ -356,11 +355,9 @@ def register():
         conn.commit(); 
         session['user_id'] = user_id; session['username'] = username; session['faction_id'] = faction_id; session['is_admin'] = is_admin_flag; session['is_developer'] = is_developer_account
         
-        # --- NEW: Trigger bulk sync for first user ---
         if is_first_user_of_faction and not is_developer_account:
             print(f"First user for faction {faction_name}. Triggering bulk system import.")
             try:
-                # We must use a new connection because the main one is closed.
                 conn_bulk, cursor_bulk = get_db_connection()
                 pg_compat_bulk = bool(DATABASE_URL)
                 param_bulk = '%s' if pg_compat_bulk else '?'
@@ -380,7 +377,6 @@ def register():
                 print(f"Bulk import complete. Added {count} systems for faction {faction_id}.")
             except Exception as e:
                 print(f"ERROR during automatic bulk import: {e}", file=sys.stderr)
-                # Don't fail the registration, just log the error
         
         return jsonify({
             'message': 'Registration successful',
@@ -392,7 +388,6 @@ def register():
     finally: 
         if conn: conn.close()
 
-# --- NEW ENDPOINT for bulk sync ---
 @app.route('/api/bulk_sync_faction_systems', methods=['POST'])
 def bulk_sync_faction_systems():
     if 'user_id' not in session or session.get('is_developer'):
@@ -449,11 +444,12 @@ def login():
     if user and user['password'] == password:
         session['user_id'], session['username'], session['faction_id'], session['is_admin'], session['is_developer'] = user['id'], user['username'], user['faction_id'], user['is_admin'], user.get('is_developer', False)
         
-        # --- NEW: Check for bulk sync button ---
         faction_id = user['faction_id']
         cursor.execute(f"SELECT COUNT(*) as count FROM faction_discovered_systems WHERE faction_id = {param}", (faction_id,))
         system_count = cursor.fetchone()['count']
-        show_bulk_sync = (system_count < 20) and not user.get('is_developer', False)
+        
+        # --- TEMPORARY TEST FIX: Change < 20 to a large number ---
+        show_bulk_sync = (system_count < 999999) and not user.get('is_developer', False)
         
         conn.close()
         return jsonify({
@@ -488,10 +484,11 @@ def status():
         faction_id = session['faction_id']
         is_developer = session.get('is_developer', False)
         
-        # --- NEW: Check for bulk sync button ---
         cursor.execute(f"SELECT COUNT(*) as count FROM faction_discovered_systems WHERE faction_id = {param}", (faction_id,))
         system_count = cursor.fetchone()['count']
-        show_bulk_sync = (system_count < 20) and not is_developer
+        
+        # --- TEMPORARY TEST FIX: Change < 20 to a large number ---
+        show_bulk_sync = (system_count < 999999) and not is_developer
         
         conn.close()
         return jsonify({
@@ -700,6 +697,7 @@ def calculate_path():
         detailed_path.append({'from_id': from_node, 'to_id': to_node, 'method': method})
     
     return jsonify({'path': path_for_json, 'detailed_path': detailed_path, 'distance': total_distance})
+
 
 # This call ensures the database is set up when the app starts.
 setup_database_if_needed()
