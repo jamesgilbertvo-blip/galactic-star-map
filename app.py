@@ -32,6 +32,8 @@ STRUCTURES_API_URL = "https://play.textspaced.com/api/system/structures/"
 CURRENT_SYSTEM_API_URL = "https://play.textspaced.com/api/system/"
 FACTION_API_URL = "https://play.textspaced.com/api/faction/info/"
 RELATIONSHIPS_API_URL = "https://play.textspaced.com/api/faction/karma/all/"
+FACTION_SYSTEMS_API_URL = "https://play.textspaced.com/api/faction/systems/"
+POI_API_URL = "https://play.textspaced.com/api/lookup/points_of_interest/"
 
 
 # --- DATABASE CONNECTION & SETUP ---
@@ -118,6 +120,41 @@ def fetch_api_data(url, api_key):
         print(f"API request failed for {url}: {e}", file=sys.stderr)
         return None
 
+# --- NEW HELPER FUNCTION ---
+def bulk_add_systems(systems_list, faction_id, cursor, pg_compat, param):
+    """Helper to bulk-add systems and link them to a faction."""
+    if not systems_list:
+        return 0
+    
+    systems_to_insert = []
+    links_to_insert = []
+    
+    for system in systems_list:
+        if not system.get('id') or not system.get('position'):
+            continue
+        
+        sys_id = int(system['id'])
+        sys_pos = float(system['position'])
+        sys_name = system.get('name') or f"System {sys_id}"
+        x, y = get_spiral_coords(sys_pos)
+        
+        systems_to_insert.append((sys_id, sys_name, x, y, sys_pos))
+        links_to_insert.append((faction_id, sys_id))
+    
+    if systems_to_insert:
+        if pg_compat:
+            cursor.executemany(f'INSERT INTO systems (id, name, x, y, position) VALUES ({param}, {param}, {param}, {param}, {param}) ON CONFLICT(id) DO NOTHING', systems_to_insert)
+        else:
+            cursor.executemany('INSERT OR IGNORE INTO systems (id, name, x, y, position) VALUES (?, ?, ?, ?, ?)', systems_to_insert)
+    
+    if links_to_insert:
+        if pg_compat:
+            cursor.executemany(f'INSERT INTO faction_discovered_systems (faction_id, system_id) VALUES ({param}, {param}) ON CONFLICT (faction_id, system_id) DO NOTHING', links_to_insert)
+        else:
+            cursor.executemany('INSERT OR IGNORE INTO faction_discovered_systems (faction_id, system_id) VALUES (?, ?)', links_to_insert)
+    
+    return len(links_to_insert)
+
 # --- ROUTES ---
 @app.route('/api/sync', methods=['POST'])
 def sync_data():
@@ -155,7 +192,6 @@ def sync_data():
         relationship_data = fetch_api_data(RELATIONSHIPS_API_URL, api_key)
         if relationship_data:
             cursor.execute(f"DELETE FROM faction_relationships WHERE faction_a_id = {param} OR faction_b_id = {param}", (faction_id, faction_id))
-            
             all_relationships_from_api = []
             
             alliance_data = relationship_data.get('alliance', {})
@@ -249,10 +285,8 @@ def sync_data():
             if pg_compat: cursor.executemany(f'INSERT INTO faction_discovered_systems (faction_id, system_id) VALUES ({param}, {param}) ON CONFLICT (faction_id, system_id) DO NOTHING', faction_systems_to_link)
             else: cursor.executemany('INSERT OR IGNORE INTO faction_discovered_systems (faction_id, system_id) VALUES (?, ?)', faction_systems_to_link)
             
-            # --- CORRECTED WORMHOLE LOGIC ---
             system_ids_in_range = list(all_systems.keys())
             if system_ids_in_range:
-                # 1. Delete all existing wormholes connected to any system in our sync range
                 if pg_compat:
                     id_tuple = tuple(system_ids_in_range)
                     cursor.execute(f"DELETE FROM wormholes WHERE system_a_id IN {param} OR system_b_id IN {param}", (id_tuple, id_tuple))
@@ -261,12 +295,10 @@ def sync_data():
                     params_list = system_ids_in_range * 2
                     cursor.execute(f"DELETE FROM wormholes WHERE system_a_id IN ({placeholders}) OR system_b_id IN ({placeholders})", params_list)
             
-            # 2. Insert the fresh list of wormholes
             if wormholes_data and 'stable' in wormholes_data:
                 stable_wormholes = wormholes_data['stable'].values() if isinstance(wormholes_data['stable'], dict) else wormholes_data['stable']
                 wormholes_to_insert = []
                 for wh in stable_wormholes:
-                    # Only add wormholes where we can see both ends in the current sync
                     if wh['from_system_id'] in system_ids_in_range and wh['to_system_id'] in system_ids_in_range:
                         wormholes_to_insert.append((min(wh['from_system_id'], wh['to_system_id']), max(wh['from_system_id'], wh['to_system_id'])))
                 
@@ -275,7 +307,6 @@ def sync_data():
                         cursor.executemany(f'INSERT INTO wormholes (system_a_id, system_b_id) VALUES ({param}, {param}) ON CONFLICT DO NOTHING', wormholes_to_insert)
                     else: 
                         cursor.executemany('INSERT OR IGNORE INTO wormholes (system_a_id, system_b_id) VALUES (?, ?)', wormholes_to_insert)
-            # --- END OF WORMHOLE LOGIC ---
         
         conn.commit()
         return jsonify({'message': 'Sync successful!'})
@@ -291,19 +322,30 @@ def register():
     conn, cursor = get_db_connection(); pg_compat = bool(DATABASE_URL); param = '%s' if pg_compat else '?'
     is_developer_account = not api_key
     if not username or not password or (not is_developer_account and not api_key): return jsonify({'message': 'Username, password, and API key are required for normal users.'}), 400
+    
     faction_name = "Developer"
     if not is_developer_account:
         faction_info = fetch_api_data(FACTION_API_URL, api_key)
         faction_name = faction_info.get('info', {}).get('name')
         if not faction_name: return jsonify({'message': 'Could not verify your faction with the provided API key.'}), 400
+    
+    is_first_user_of_faction = False
     try:
         cursor.execute("SELECT id FROM users LIMIT 1"); is_first_user = cursor.fetchone() is None
         is_admin_flag = True if is_first_user else False
+        
         cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (faction_name,)); faction = cursor.fetchone()
-        if faction: faction_id = faction['id']
+        if faction: 
+            faction_id = faction['id']
+            # Check if this is the first user for this faction
+            cursor.execute(f"SELECT id FROM users WHERE faction_id = {param} LIMIT 1", (faction_id,))
+            if cursor.fetchone() is None:
+                is_first_user_of_faction = True
         else:
             if pg_compat: cursor.execute(f"INSERT INTO factions (name) VALUES ({param}) RETURNING id", (faction_name,)); faction_id = cursor.fetchone()['id']
             else: cursor.execute("INSERT INTO factions (name) VALUES (?)", (faction_name,)); faction_id = cursor.lastrowid
+            is_first_user_of_faction = True # It's a new faction, so this is definitely the first user
+        
         encrypted_api_key = fernet.encrypt(api_key.encode()).decode() if api_key else None
         if pg_compat:
             cursor.execute(f"INSERT INTO users (username, password, api_key, faction_id, is_admin, is_developer) VALUES ({param}, {param}, {param}, {param}, {param}, {param}) RETURNING id", (username, password, encrypted_api_key, faction_id, is_admin_flag, is_developer_account))
@@ -314,6 +356,32 @@ def register():
         conn.commit(); 
         session['user_id'] = user_id; session['username'] = username; session['faction_id'] = faction_id; session['is_admin'] = is_admin_flag; session['is_developer'] = is_developer_account
         
+        # --- NEW: Trigger bulk sync for first user ---
+        if is_first_user_of_faction and not is_developer_account:
+            print(f"First user for faction {faction_name}. Triggering bulk system import.")
+            try:
+                # We must use a new connection because the main one is closed.
+                conn_bulk, cursor_bulk = get_db_connection()
+                pg_compat_bulk = bool(DATABASE_URL)
+                param_bulk = '%s' if pg_compat_bulk else '?'
+
+                all_systems_to_add = {}
+                faction_systems = fetch_api_data(FACTION_SYSTEMS_API_URL, api_key)
+                poi_systems = fetch_api_data(POI_API_URL, api_key)
+                
+                if faction_systems:
+                    for sys in faction_systems: all_systems_to_add[sys['id']] = sys
+                if poi_systems:
+                    for sys in poi_systems: all_systems_to_add[sys['id']] = sys
+
+                count = bulk_add_systems(all_systems_to_add.values(), faction_id, cursor_bulk, pg_compat_bulk, param_bulk)
+                conn_bulk.commit()
+                conn_bulk.close()
+                print(f"Bulk import complete. Added {count} systems for faction {faction_id}.")
+            except Exception as e:
+                print(f"ERROR during automatic bulk import: {e}", file=sys.stderr)
+                # Don't fail the registration, just log the error
+        
         return jsonify({
             'message': 'Registration successful',
             'username': username,
@@ -321,15 +389,82 @@ def register():
             'is_developer': is_developer_account
         }), 201
     except (sqlite3.IntegrityError, psycopg2.IntegrityError): return jsonify({'message': 'Username already exists.'}), 409
-    finally: conn.close()
+    finally: 
+        if conn: conn.close()
+
+# --- NEW ENDPOINT for bulk sync ---
+@app.route('/api/bulk_sync_faction_systems', methods=['POST'])
+def bulk_sync_faction_systems():
+    if 'user_id' not in session or session.get('is_developer'):
+        return jsonify({'error': 'Not authenticated'}), 401
+
+    conn, cursor = get_db_connection()
+    pg_compat = bool(DATABASE_URL)
+    param = '%s' if pg_compat else '?'
+    
+    try:
+        user_id = session['user_id']
+        faction_id = session['faction_id']
+        
+        cursor.execute(f"SELECT api_key FROM users WHERE id = {param}", (user_id,))
+        user = cursor.fetchone()
+        encrypted_api_key = user['api_key'] if user else None
+        
+        if not encrypted_api_key:
+            return jsonify({'error': 'API key not found.'}), 400
+        
+        api_key = fernet.decrypt(encrypted_api_key.encode()).decode()
+
+        all_systems_to_add = {}
+        faction_systems = fetch_api_data(FACTION_SYSTEMS_API_URL, api_key)
+        poi_systems = fetch_api_data(POI_API_URL, api_key)
+        
+        if faction_systems:
+            for sys in faction_systems: all_systems_to_add[sys['id']] = sys
+        if poi_systems:
+            for sys in poi_systems: all_systems_to_add[sys['id']] = sys
+        
+        if not all_systems_to_add:
+            return jsonify({'error': 'Failed to fetch any systems from the API.'}), 500
+
+        count = bulk_add_systems(all_systems_to_add.values(), faction_id, cursor, pg_compat, param)
+        conn.commit()
+        
+        return jsonify({'message': f'Successfully imported {count} systems for your faction!'})
+    
+    except Exception as e:
+        conn.rollback()
+        print(f"ERROR in /api/bulk_sync_faction_systems: {e}", file=sys.stderr)
+        return jsonify({'error': 'An internal error occurred during the import.'}), 500
+    finally:
+        if conn: conn.close()
+
 
 @app.route('/login', methods=['POST'])
 def login():
     data = request.get_json(); username, password = data.get('username'), data.get('password')
-    conn, cursor = get_db_connection(); cursor.execute(f"SELECT * FROM users WHERE username = {'%s' if bool(DATABASE_URL) else '?'}", (username,)); user = cursor.fetchone(); conn.close()
+    conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
+    cursor.execute(f"SELECT * FROM users WHERE username = {param}", (username,)); user = cursor.fetchone()
+    
     if user and user['password'] == password:
         session['user_id'], session['username'], session['faction_id'], session['is_admin'], session['is_developer'] = user['id'], user['username'], user['faction_id'], user['is_admin'], user.get('is_developer', False)
-        return jsonify({'message': 'Login successful', 'username': user['username'], 'is_admin': user['is_admin'], 'is_developer': user.get('is_developer', False)})
+        
+        # --- NEW: Check for bulk sync button ---
+        faction_id = user['faction_id']
+        cursor.execute(f"SELECT COUNT(*) as count FROM faction_discovered_systems WHERE faction_id = {param}", (faction_id,))
+        system_count = cursor.fetchone()['count']
+        show_bulk_sync = (system_count < 20) and not user.get('is_developer', False)
+        
+        conn.close()
+        return jsonify({
+            'message': 'Login successful', 
+            'username': user['username'], 
+            'is_admin': user['is_admin'], 
+            'is_developer': user.get('is_developer', False),
+            'show_bulk_sync': show_bulk_sync
+        })
+    
+    if conn: conn.close()
     return jsonify({'message': 'Invalid username or password'}), 401
 
 @app.route('/')
@@ -348,7 +483,24 @@ def logout(): session.clear(); return jsonify({'message': 'Logout successful'})
 
 @app.route('/status')
 def status():
-    if 'user_id' in session: return jsonify({'logged_in': True, 'username': session['username'], 'is_admin': session.get('is_admin', False), 'is_developer': session.get('is_developer', False)})
+    if 'user_id' in session:
+        conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
+        faction_id = session['faction_id']
+        is_developer = session.get('is_developer', False)
+        
+        # --- NEW: Check for bulk sync button ---
+        cursor.execute(f"SELECT COUNT(*) as count FROM faction_discovered_systems WHERE faction_id = {param}", (faction_id,))
+        system_count = cursor.fetchone()['count']
+        show_bulk_sync = (system_count < 20) and not is_developer
+        
+        conn.close()
+        return jsonify({
+            'logged_in': True, 
+            'username': session['username'], 
+            'is_admin': session.get('is_admin', False), 
+            'is_developer': is_developer,
+            'show_bulk_sync': show_bulk_sync
+        })
     return jsonify({'logged_in': False})
 
 @app.route('/api/profile', methods=['GET', 'POST'])
@@ -548,7 +700,6 @@ def calculate_path():
         detailed_path.append({'from_id': from_node, 'to_id': to_node, 'method': method})
     
     return jsonify({'path': path_for_json, 'detailed_path': detailed_path, 'distance': total_distance})
-
 
 # This call ensures the database is set up when the app starts.
 setup_database_if_needed()

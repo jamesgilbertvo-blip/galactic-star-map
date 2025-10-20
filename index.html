@@ -91,8 +91,12 @@
                 <div><label for="api-key-input" class="block text-sm font-medium text-gray-300">API Key</label><input id="api-key-input" type="text" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="Enter your game API key"></div>
                 <div><label for="new-password-input" class="block text-sm font-medium text-gray-300">New Password (optional)</label><input id="new-password-input" type="password" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="Leave blank to keep current password"></div>
                 <div><button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md">Save Changes</button></div>
-                <p id="profile-status" class="text-sm text-center h-4" aria-live="assertive"></p>
             </form>
+            <div class="border-t border-gray-700 pt-4">
+                <button id="bulk-sync-button" type="button" class="hidden w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md">One-Time Faction System Import</button>
+                <p class="text-xs text-gray-400 text-center mt-2">Populate your map with all known Faction & POI systems. This is only shown once for new factions.</p>
+            </div>
+            <p id="profile-status" class="text-sm text-center h-4" aria-live="assertive"></p>
         </div>
     </div>
 
@@ -150,7 +154,7 @@
         </aside>
 
         <main class="relative flex-grow flex items-center justify-center">
-            <button id="menu-button" class="md:hidden absolute top-4 left-4 z-30 p-2 bg-gray-800 text-white rounded-md flex items-center space-x-2" title="Toggle Menu" aria-label="Toggle map controls panel" aria-controls="side-panel" aria-expanded="false">
+            <button id="menu-button" class="md:hidden absolute top-4 left-4 z-30 p-2 bg-gray-800 text-white rounded-md flex items-center space-x-2" title="Toggle Menu" aria-label="Toggle map controls panel" aria-controls="side-panel" aria-expanded="true">
                 <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
                 <span class="text-sm">Toggle Controls</span>
             </button>
@@ -173,6 +177,7 @@
         let highlightedSearchSystemId = null;
         let filterShowCatapults = true;
         let filterShowWormholes = true;
+        let showBulkSyncButton = false; // NEW: State for bulk sync button
 
         const dom = { 
             loginView: document.getElementById('login-view'), mapView: document.getElementById('map-view'), registerView: document.getElementById('register-view'), 
@@ -192,14 +197,15 @@
             searchForm: document.getElementById('search-form'),
             searchInput: document.getElementById('search-input'),
             filterCatapults: document.getElementById('filter-catapults'),
-            filterWormholes: document.getElementById('filter-wormholes')
+            filterWormholes: document.getElementById('filter-wormholes'),
+            bulkSyncButton: document.getElementById('bulk-sync-button') // NEW: Bulk sync button
         };
 
         const apiFetch = (url, options = {}) => { options.credentials = 'include'; return fetch(url, options); };
-        const handleLogin = async (e) => { e.preventDefault(); const r=await apiFetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:dom.loginForm.username.value,password:dom.loginForm.password.value})}); const d=await r.json(); if(r.ok)showMapView(d.username, d.is_admin, d.is_developer); else dom.loginError.textContent=d.message||'Login failed.'; };
-        const handleRegister = async (e) => { e.preventDefault(); const p={username:dom.registerForm.username.value,password:dom.registerForm.password.value,api_key:dom.registerForm.api_key.value}; const r=await apiFetch('/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); const d=await r.json(); if(r.ok)showMapView(d.username, d.is_admin, d.is_developer, true); else dom.registerError.textContent=d.message||'Registration failed.'; };
+        const handleLogin = async (e) => { e.preventDefault(); const r=await apiFetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:dom.loginForm.username.value,password:dom.loginForm.password.value})}); const d=await r.json(); if(r.ok)showMapView(d); else dom.loginError.textContent=d.message||'Login failed.'; };
+        const handleRegister = async (e) => { e.preventDefault(); const p={username:dom.registerForm.username.value,password:dom.registerForm.password.value,api_key:dom.registerForm.api_key.value}; const r=await apiFetch('/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); const d=await r.json(); if(r.ok)showMapView(d, true); else dom.registerError.textContent=d.message||'Registration failed.'; };
         const handleLogout = async () => { await apiFetch('/logout', { method: 'POST' }); localStorage.removeItem('mapViewTransform'); showLoginView(); };
-        const checkLoginStatus = async () => { const r=await apiFetch('/status'); const d=await r.json(); if(d.logged_in)showMapView(d.username, d.is_admin, d.is_developer); else showLoginView(); };
+        const checkLoginStatus = async () => { const r=await apiFetch('/status'); const d=await r.json(); if(d.logged_in)showMapView(d); else showLoginView(); };
         
         const handleSync = async () => {
             const oldSystemIds = new Set(Object.keys(systems));
@@ -220,7 +226,46 @@
             } 
         };
 
-        const openProfile = async () => { dom.profileStatus.textContent = ''; dom.newPasswordInput.value = ''; const r=await apiFetch('/api/profile'); const d=await r.json(); dom.apiKeyInput.value = d.api_key_set ? '(Key is set and encrypted)' : ''; dom.apiKeyInput.placeholder = d.api_key_set ? 'Enter a new key to overwrite' : 'Enter your game API key'; dom.profileView.classList.remove('hidden'); };
+        // NEW: Handler for the bulk sync button
+        const handleBulkSync = async (e) => {
+            e.preventDefault();
+            dom.profileStatus.textContent = 'Importing... this may take a moment.';
+            dom.bulkSyncButton.disabled = true;
+            try {
+                const r = await apiFetch('/api/bulk_sync_faction_systems', {method: 'POST'});
+                const d = await r.json();
+                if (!r.ok) throw new Error(d.error || 'Failed to import.');
+                
+                dom.profileStatus.textContent = d.message;
+                showBulkSyncButton = false; // Hide button permanently after successful use
+                dom.bulkSyncButton.classList.add('hidden');
+                await fetchMapData(false); // Refresh the map
+                setTimeout(closeProfile, 2000);
+
+            } catch (e) {
+                dom.profileStatus.textContent = `Error: ${e.message}`;
+                dom.bulkSyncButton.disabled = false;
+            }
+        };
+
+        const openProfile = async () => { 
+            dom.profileStatus.textContent = ''; 
+            dom.newPasswordInput.value = ''; 
+            const r = await apiFetch('/api/profile'); 
+            const d = await r.json(); 
+            dom.apiKeyInput.value = d.api_key_set ? '(Key is set and encrypted)' : ''; 
+            dom.apiKeyInput.placeholder = d.api_key_set ? 'Enter a new key to overwrite' : 'Enter your game API key'; 
+            
+            // NEW: Show/hide bulk sync button
+            if (showBulkSyncButton) {
+                dom.bulkSyncButton.classList.remove('hidden');
+                dom.bulkSyncButton.disabled = false;
+            } else {
+                dom.bulkSyncButton.classList.add('hidden');
+            }
+
+            dom.profileView.classList.remove('hidden'); 
+        };
         const closeProfile = () => dom.profileView.classList.add('hidden');
         const handleProfileUpdate = async (e) => { e.preventDefault(); dom.profileStatus.textContent = 'Saving...'; const p={}; if (dom.apiKeyInput.value && dom.apiKeyInput.value !== '(Key is set and encrypted)') p.api_key = dom.apiKeyInput.value; if (dom.newPasswordInput.value) p.password = dom.newPasswordInput.value; const r=await apiFetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); const d=await r.json(); dom.profileStatus.textContent = d.message; setTimeout(closeProfile, 2000); };
         
@@ -256,13 +301,19 @@
 
         function showLoginView() { dom.mapView.classList.add('hidden'); dom.registerView.classList.add('hidden'); dom.loginView.classList.remove('hidden'); }
         function showRegisterView() { dom.mapView.classList.add('hidden'); dom.loginView.classList.add('hidden'); dom.registerView.classList.remove('hidden'); }
-        function showMapView(username, isAdmin, isDeveloper, isNewRegistration = false) {
+        
+        // UPDATED: Function now takes the full data object
+        function showMapView(data, isNewRegistration = false) {
             dom.loginView.classList.add('hidden'); dom.registerView.classList.add('hidden'); dom.mapView.classList.remove('hidden');
-            dom.welcomeMessage.textContent = `Welcome, ${username}`;
+            dom.welcomeMessage.textContent = `Welcome, ${data.username}`;
+            
+            // NEW: Store the bulk sync flag
+            showBulkSyncButton = data.show_bulk_sync || false;
+
             let adminBtn = document.getElementById('admin-button');
-            if (isAdmin && !adminBtn) { adminBtn = document.createElement('a'); adminBtn.id = 'admin-button'; adminBtn.href = '/admin'; adminBtn.textContent = 'Admin'; adminBtn.className = 'px-3 py-1 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700'; dom.userControls.prepend(adminBtn); } 
-            else if (!isAdmin && adminBtn) { adminBtn.remove(); }
-            if (isDeveloper) { dom.syncContainer.classList.add('hidden'); } else { dom.syncContainer.classList.remove('hidden'); }
+            if (data.is_admin && !adminBtn) { adminBtn = document.createElement('a'); adminBtn.id = 'admin-button'; adminBtn.href = '/admin'; adminBtn.textContent = 'Admin'; adminBtn.className = 'px-3 py-1 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700'; dom.userControls.prepend(adminBtn); } 
+            else if (!data.is_admin && adminBtn) { adminBtn.remove(); }
+            if (data.is_developer) { dom.syncContainer.classList.add('hidden'); } else { dom.syncContainer.classList.remove('hidden'); }
             
             resizeCanvas(); 
 
@@ -343,7 +394,6 @@
                 Object.values(systems).forEach(sys => { 
                     if (typeof sys.position !== 'number' || !sys.catapult_radius || sys.catapult_radius <= 0) return;
                     const isToggled = toggledCatapultIds.has(String(sys.id));
-                    // --- FIX IS HERE: Logic respects both global filter and individual toggle ---
                     if (!isToggled) { 
                         let rangeColor = 'rgba(132, 204, 22, 0.3)';
                         if (highlightedCatapultSystemId !== null) { rangeColor = (sys.id === highlightedCatapultSystemId) ? 'rgba(163, 230, 57, 0.9)' : 'rgba(132, 204, 22, 0.05)'; }
@@ -592,7 +642,7 @@
             dom.searchForm.addEventListener('submit', (e) => {
                 e.preventDefault();
                 const query = dom.searchInput.value.trim().toLowerCase();
-                const foundSystem = Object.values(systems).find(s => s.name.toLowerCase() === query || `#${s.position}` === query.toLowerCase());
+                const foundSystem = Object.values(systems).find(s => s.name.toLowerCase() === query || (s.position && `#${s.position}` === query.toLowerCase()));
                 if (foundSystem) {
                     viewTransform.scale = 1.5;
                     viewTransform.translateX = (dom.canvas.width / 2) - (foundSystem.x * viewTransform.scale);
