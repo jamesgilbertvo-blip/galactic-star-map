@@ -128,7 +128,6 @@ def bulk_add_systems(systems_list, faction_id, cursor, pg_compat, param):
     links_to_insert = []
     
     for system_data in systems_list:
-        # --- FIX #1: Use the correct keys from the API ---
         sys_id = system_data.get('system_id')
         sys_pos = system_data.get('system_position')
         
@@ -239,8 +238,11 @@ def sync_data():
              return jsonify({'message': 'Failed to fetch any data from game API.'}), 500
 
         all_systems = {}
+        current_system_id = None # --- FIX: Store the current system ID
         if current_system_data and 'system' in current_system_data:
-            for sys_id, sys_info in current_system_data['system'].items(): all_systems[int(sys_id)] = {'system_id': int(sys_id), 'system_name': sys_info['system_name'], 'system_position': sys_info['system_position']}
+            for sys_id, sys_info in current_system_data['system'].items(): 
+                current_system_id = int(sys_id) # --- FIX: Capture the ID
+                all_systems[current_system_id] = {'system_id': current_system_id, 'system_name': sys_info['system_name'], 'system_position': sys_info['system_position']}
         if systems_data:
             for s in systems_data: all_systems[s['system_id']] = s
         if wormholes_data and 'stable' in wormholes_data:
@@ -254,8 +256,8 @@ def sync_data():
             if pg_compat: cursor.executemany(f'INSERT INTO systems (id, name, x, y, position) VALUES ({param}, {param}, {param}, {param}, {param}) ON CONFLICT(id) DO NOTHING', systems_to_insert)
             else: cursor.executemany('INSERT OR IGNORE INTO systems (id, name, x, y, position) VALUES (?, ?, ?, ?, ?)', systems_to_insert)
 
-            if structures_data and current_system_data and 'system' in current_system_data:
-                current_system_id = int(list(current_system_data['system'].keys())[0]); max_catapult_radius = 0
+            if structures_data and current_system_id:
+                max_catapult_radius = 0
                 if isinstance(structures_data, dict):
                     for structure in structures_data.values():
                         if structure and isinstance(structure, dict) and structure.get("type_name") == "Null Space Catapult":
@@ -263,9 +265,8 @@ def sync_data():
                             if current_radius > max_catapult_radius: max_catapult_radius = current_radius
                 cursor.execute(f"UPDATE systems SET catapult_radius = {param} WHERE id = {param}", (max_catapult_radius, current_system_id))
 
-            if current_system_data and 'system' in current_system_data:
+            if current_system_id:
                 current_sys_details = list(current_system_data['system'].values())[0]
-                current_sys_id = int(list(current_system_data['system'].keys())[0])
                 owner_faction_name = current_sys_details.get('system_faction_name')
                 owner_db_id = None
 
@@ -281,26 +282,24 @@ def sync_data():
                         else:
                             cursor.execute("INSERT INTO factions (name) VALUES (?)", (owner_faction_name,)); owner_db_id = cursor.lastrowid
                 
-                cursor.execute(f"UPDATE systems SET owner_faction_id = {param} WHERE id = {param}", (owner_db_id, current_sys_id))
+                cursor.execute(f"UPDATE systems SET owner_faction_id = {param} WHERE id = {param}", (owner_db_id, current_system_id))
 
             faction_systems_to_link = [(faction_id, sys_id) for sys_id in all_systems.keys()]
             if pg_compat: cursor.executemany(f'INSERT INTO faction_discovered_systems (faction_id, system_id) VALUES ({param}, {param}) ON CONFLICT (faction_id, system_id) DO NOTHING', faction_systems_to_link)
             else: cursor.executemany('INSERT OR IGNORE INTO faction_discovered_systems (faction_id, system_id) VALUES (?, ?)', faction_systems_to_link)
             
-            system_ids_in_range = list(all_systems.keys())
-            if system_ids_in_range:
-                if pg_compat:
-                    id_tuple = tuple(system_ids_in_range)
-                    cursor.execute(f"DELETE FROM wormholes WHERE system_a_id IN {param} OR system_b_id IN {param}", (id_tuple, id_tuple))
-                else:
-                    placeholders = ','.join(['?'] * len(system_ids_in_range))
-                    params_list = system_ids_in_range * 2
-                    cursor.execute(f"DELETE FROM wormholes WHERE system_a_id IN ({placeholders}) OR system_b_id IN ({placeholders})", params_list)
+            # --- CORRECTED WORMHOLE LOGIC ---
+            if current_system_id:
+                # 1. Delete all existing wormholes connected ONLY to the system we are currently in
+                cursor.execute(f"DELETE FROM wormholes WHERE system_a_id = {param} OR system_b_id = {param}", (current_system_id, current_system_id))
             
+            # 2. Insert the fresh list of wormholes
             if wormholes_data and 'stable' in wormholes_data:
                 stable_wormholes = wormholes_data['stable'].values() if isinstance(wormholes_data['stable'], dict) else wormholes_data['stable']
                 wormholes_to_insert = []
+                system_ids_in_range = list(all_systems.keys()) # We still need this to check both ends
                 for wh in stable_wormholes:
+                    # Only add wormholes where we can see both ends in the current sync
                     if wh['from_system_id'] in system_ids_in_range and wh['to_system_id'] in system_ids_in_range:
                         wormholes_to_insert.append((min(wh['from_system_id'], wh['to_system_id']), max(wh['from_system_id'], wh['to_system_id'])))
                 
@@ -309,6 +308,7 @@ def sync_data():
                         cursor.executemany(f'INSERT INTO wormholes (system_a_id, system_b_id) VALUES ({param}, {param}) ON CONFLICT DO NOTHING', wormholes_to_insert)
                     else: 
                         cursor.executemany('INSERT OR IGNORE INTO wormholes (system_a_id, system_b_id) VALUES (?, ?)', wormholes_to_insert)
+            # --- END OF WORMHOLE LOGIC ---
         
         conn.commit()
         return jsonify({'message': 'Sync successful!'})
@@ -339,7 +339,6 @@ def register():
         cursor.execute(f"SELECT id, initial_import_done FROM factions WHERE name = {param}", (faction_name,)); faction = cursor.fetchone()
         if faction: 
             faction_id = faction['id']
-            # Check if this is the first user for this faction
             cursor.execute(f"SELECT id FROM users WHERE faction_id = {param} LIMIT 1", (faction_id,))
             if cursor.fetchone() is None:
                 is_first_user_of_faction = True
@@ -369,7 +368,6 @@ def register():
                 faction_systems = fetch_api_data(FACTION_SYSTEMS_API_URL, api_key)
                 poi_systems = fetch_api_data(POI_API_URL, api_key)
                 
-                # --- CORRECTED LOGIC ---
                 if faction_systems and isinstance(faction_systems, dict):
                     for system_data in faction_systems.values():
                         if system_data.get('system_id'):
@@ -387,11 +385,9 @@ def register():
                                 'system_name': system_data.get('system_name'),
                                 'system_position': system_data.get('system_position')
                             }
-                # --- END CORRECTION ---
 
                 count = bulk_add_systems(all_systems_to_add.values(), faction_id, cursor_bulk, pg_compat_bulk, param_bulk)
                 
-                # --- FIX #2: Set the flag after import ---
                 cursor_bulk.execute(f"UPDATE factions SET initial_import_done = TRUE WHERE id = {param_bulk}", (faction_id,))
                 conn_bulk.commit()
                 conn_bulk.close()
@@ -435,7 +431,6 @@ def bulk_sync_faction_systems():
         faction_systems = fetch_api_data(FACTION_SYSTEMS_API_URL, api_key)
         poi_systems = fetch_api_data(POI_API_URL, api_key)
         
-        # --- CORRECTED LOGIC ---
         if faction_systems and isinstance(faction_systems, dict):
             for system_data in faction_systems.values():
                 if system_data.get('system_id'):
@@ -453,14 +448,12 @@ def bulk_sync_faction_systems():
                         'system_name': system_data.get('system_name'),
                         'system_position': system_data.get('system_position')
                     }
-        # --- END CORRECTION ---
         
         if not all_systems_to_add:
             return jsonify({'error': 'Failed to fetch any systems from the API.'}), 500
 
         count = bulk_add_systems(all_systems_to_add.values(), faction_id, cursor, pg_compat, param)
         
-        # --- FIX #2: Set the flag after import ---
         cursor.execute(f"UPDATE factions SET initial_import_done = TRUE WHERE id = {param}", (faction_id,))
         
         conn.commit()
@@ -480,14 +473,12 @@ def login():
     data = request.get_json(); username, password = data.get('username'), data.get('password')
     conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
     
-    # --- FIX #2: Join with factions table to get the new flag ---
     cursor.execute(f"SELECT u.*, f.initial_import_done FROM users u JOIN factions f ON u.faction_id = f.id WHERE u.username = {param}", (username,)); 
     user = cursor.fetchone()
     
     if user and user['password'] == password:
         session['user_id'], session['username'], session['faction_id'], session['is_admin'], session['is_developer'] = user['id'], user['username'], user['faction_id'], user['is_admin'], user.get('is_developer', False)
         
-        # --- FIX #2: Check the new flag ---
         show_bulk_sync = (not user['initial_import_done']) and not user.get('is_developer', False)
         
         conn.close()
@@ -523,7 +514,6 @@ def status():
         faction_id = session['faction_id']
         is_developer = session.get('is_developer', False)
         
-        # --- FIX #2: Check the new flag ---
         cursor.execute(f"SELECT initial_import_done FROM factions WHERE id = {param}", (faction_id,))
         faction = cursor.fetchone()
         show_bulk_sync = (faction and not faction['initial_import_done']) and not is_developer
