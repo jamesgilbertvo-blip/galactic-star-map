@@ -158,6 +158,9 @@
                 <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
                 <span class="text-sm">Toggle Controls</span>
             </button>
+            <button id="center-me-button" class="absolute bottom-4 right-4 z-10 p-2 bg-gray-800 text-white rounded-full shadow-lg" title="Center on last known location">
+                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M10 8a2 2 0 100-4 2 2 0 000 4z" /><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm0 2a10 10 0 100-20 10 10 0 000 20z" clip-rule="evenodd" /></svg>
+            </button>
             <canvas id="map-canvas" class="w-full h-full"></canvas>
         </main>
     </div>
@@ -178,6 +181,7 @@
         let filterShowCatapults = true;
         let filterShowWormholes = true;
         let showBulkSyncButton = false;
+        let lastKnownSystemId = null; // NEW: Store location
 
         const dom = { 
             loginView: document.getElementById('login-view'), mapView: document.getElementById('map-view'), registerView: document.getElementById('register-view'), 
@@ -199,7 +203,8 @@
             filterCatapults: document.getElementById('filter-catapults'),
             filterWormholes: document.getElementById('filter-wormholes'),
             bulkSyncButton: document.getElementById('bulk-sync-button'),
-            bulkSyncText: document.getElementById('bulk-sync-text') // --- FIX #3 ---
+            bulkSyncText: document.getElementById('bulk-sync-text'),
+            centerMeButton: document.getElementById('center-me-button') // NEW: Center button
         };
 
         const apiFetch = (url, options = {}) => { options.credentials = 'include'; return fetch(url, options); };
@@ -217,6 +222,11 @@
                 const d = await r.json(); 
                 dom.syncStatus.textContent = d.message; 
                 if (r.ok) {
+                    const statusRes = await apiFetch('/status'); // Re-fetch status to get new last_known_system_id
+                    const statusData = await statusRes.json();
+                    if (statusData.logged_in) {
+                        lastKnownSystemId = statusData.last_known_system_id; // Update location
+                    }
                     await fetchMapData(false, oldSystemIds);
                 }
             } catch (e) { 
@@ -239,7 +249,7 @@
                 dom.profileStatus.textContent = d.message;
                 showBulkSyncButton = false;
                 dom.bulkSyncButton.classList.add('hidden');
-                dom.bulkSyncText.classList.add('hidden'); // --- FIX #3 ---
+                dom.bulkSyncText.classList.add('hidden');
                 await fetchMapData(false);
                 setTimeout(closeProfile, 2000);
 
@@ -259,11 +269,11 @@
             
             if (showBulkSyncButton) {
                 dom.bulkSyncButton.classList.remove('hidden');
-                dom.bulkSyncText.classList.remove('hidden'); // --- FIX #3 ---
+                dom.bulkSyncText.classList.remove('hidden');
                 dom.bulkSyncButton.disabled = false;
             } else {
                 dom.bulkSyncButton.classList.add('hidden');
-                dom.bulkSyncText.classList.add('hidden'); // --- FIX #3 ---
+                dom.bulkSyncText.classList.add('hidden');
             }
 
             dom.profileView.classList.remove('hidden'); 
@@ -308,6 +318,7 @@
             dom.loginView.classList.add('hidden'); dom.registerView.classList.add('hidden'); dom.mapView.classList.remove('hidden');
             dom.welcomeMessage.textContent = `Welcome, ${data.username}`;
             showBulkSyncButton = data.show_bulk_sync || false;
+            lastKnownSystemId = data.last_known_system_id || null; // NEW: Store location
 
             let adminBtn = document.getElementById('admin-button');
             if (data.is_admin && !adminBtn) { adminBtn = document.createElement('a'); adminBtn.id = 'admin-button'; adminBtn.href = '/admin'; adminBtn.textContent = 'Admin'; adminBtn.className = 'px-3 py-1 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700'; dom.userControls.prepend(adminBtn); } 
@@ -373,6 +384,25 @@
             const isExpanded = dom.menuButton.getAttribute('aria-expanded') === 'true';
             dom.sidePanel.classList.toggle('-translate-x-full');
             dom.menuButton.setAttribute('aria-expanded', !isExpanded);
+        }
+        
+        // NEW: "Center on Me" function
+        function centerOnMyLocation() {
+            if (!lastKnownSystemId) {
+                alert("No location known. Please sync your data first.");
+                return;
+            }
+            const targetSystem = systems[lastKnownSystemId];
+            if (!targetSystem) {
+                alert("Your last known location is not in the discovered map. Please sync again.");
+                return;
+            }
+            
+            viewTransform.scale = 1.0; // Set a reasonable zoom
+            viewTransform.translateX = (dom.canvas.width / 2) - (targetSystem.x * viewTransform.scale);
+            viewTransform.translateY = (dom.canvas.height / 2) - (targetSystem.y * viewTransform.scale);
+            drawMap();
+            localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform));
         }
 
         function clearRouteDisplay() { calculatedPathNodes = []; dom.routeDetailsContainer.innerHTML = ''; dom.startSystemInput.value = ''; dom.endSystemInput.value = ''; drawMap(); }
@@ -622,6 +652,7 @@
             dom.toggleUnclaimedNames.addEventListener('change', (e) => { showUnclaimedNames = e.target.checked; drawMap(); });
             dom.resetViewButton.addEventListener('click', handleResetView);
             dom.menuButton.addEventListener('click', toggleSidePanel);
+            dom.centerMeButton.addEventListener('click', centerOnMyLocation); // NEW
             
             dom.routeForm.addEventListener('submit', (e) => {
                 e.preventDefault();
@@ -660,8 +691,6 @@
 
             dom.filterCatapults.addEventListener('change', (e) => { filterShowCatapults = e.target.checked; drawMap(); });
             dom.filterWormholes.addEventListener('change', (e) => { filterShowWormholes = e.target.checked; drawMap(); });
-            
-            // --- FIX IS HERE ---
             dom.bulkSyncButton.addEventListener('click', handleBulkSync);
 
             dom.startSystemInput.addEventListener('focus', () => { activeRouteInput = dom.startSystemInput; });

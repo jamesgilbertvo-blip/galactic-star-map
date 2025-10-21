@@ -65,7 +65,8 @@ def setup_database_if_needed():
             username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, api_key TEXT,
             faction_id INTEGER NOT NULL REFERENCES factions(id),
             is_admin BOOLEAN DEFAULT FALSE NOT NULL,
-            is_developer BOOLEAN DEFAULT FALSE NOT NULL
+            is_developer BOOLEAN DEFAULT FALSE NOT NULL,
+            last_known_system_id INTEGER -- NEW COLUMN
         )''')
         cursor.execute('CREATE TABLE systems (id INTEGER PRIMARY KEY, name TEXT NOT NULL, x REAL NOT NULL, y REAL NOT NULL, position REAL NOT NULL UNIQUE, catapult_radius REAL DEFAULT 0, owner_faction_id INTEGER REFERENCES factions(id))')
         cursor.execute('CREATE TABLE faction_discovered_systems (faction_id INTEGER NOT NULL REFERENCES factions(id), system_id INTEGER NOT NULL REFERENCES systems(id), PRIMARY KEY (faction_id, system_id))')
@@ -238,11 +239,12 @@ def sync_data():
              return jsonify({'message': 'Failed to fetch any data from game API.'}), 500
 
         all_systems = {}
-        current_system_id = None # --- FIX: Store the current system ID
+        current_system_id = None 
         if current_system_data and 'system' in current_system_data:
             for sys_id, sys_info in current_system_data['system'].items(): 
-                current_system_id = int(sys_id) # --- FIX: Capture the ID
+                current_system_id = int(sys_id) 
                 all_systems[current_system_id] = {'system_id': current_system_id, 'system_name': sys_info['system_name'], 'system_position': sys_info['system_position']}
+        
         if systems_data:
             for s in systems_data: all_systems[s['system_id']] = s
         if wormholes_data and 'stable' in wormholes_data:
@@ -266,6 +268,11 @@ def sync_data():
                 cursor.execute(f"UPDATE systems SET catapult_radius = {param} WHERE id = {param}", (max_catapult_radius, current_system_id))
 
             if current_system_id:
+                # --- NEW: Save the user's last known location ---
+                cursor.execute(f"UPDATE users SET last_known_system_id = {param} WHERE id = {param}", (current_system_id, user_id))
+                session['last_known_system_id'] = current_system_id # Update session immediately
+                # --- END NEW ---
+
                 current_sys_details = list(current_system_data['system'].values())[0]
                 owner_faction_name = current_sys_details.get('system_faction_name')
                 owner_db_id = None
@@ -288,18 +295,14 @@ def sync_data():
             if pg_compat: cursor.executemany(f'INSERT INTO faction_discovered_systems (faction_id, system_id) VALUES ({param}, {param}) ON CONFLICT (faction_id, system_id) DO NOTHING', faction_systems_to_link)
             else: cursor.executemany('INSERT OR IGNORE INTO faction_discovered_systems (faction_id, system_id) VALUES (?, ?)', faction_systems_to_link)
             
-            # --- CORRECTED WORMHOLE LOGIC ---
+            system_ids_in_range = list(all_systems.keys())
             if current_system_id:
-                # 1. Delete all existing wormholes connected ONLY to the system we are currently in
                 cursor.execute(f"DELETE FROM wormholes WHERE system_a_id = {param} OR system_b_id = {param}", (current_system_id, current_system_id))
             
-            # 2. Insert the fresh list of wormholes
             if wormholes_data and 'stable' in wormholes_data:
                 stable_wormholes = wormholes_data['stable'].values() if isinstance(wormholes_data['stable'], dict) else wormholes_data['stable']
                 wormholes_to_insert = []
-                system_ids_in_range = list(all_systems.keys()) # We still need this to check both ends
                 for wh in stable_wormholes:
-                    # Only add wormholes where we can see both ends in the current sync
                     if wh['from_system_id'] in system_ids_in_range and wh['to_system_id'] in system_ids_in_range:
                         wormholes_to_insert.append((min(wh['from_system_id'], wh['to_system_id']), max(wh['from_system_id'], wh['to_system_id'])))
                 
@@ -308,7 +311,6 @@ def sync_data():
                         cursor.executemany(f'INSERT INTO wormholes (system_a_id, system_b_id) VALUES ({param}, {param}) ON CONFLICT DO NOTHING', wormholes_to_insert)
                     else: 
                         cursor.executemany('INSERT OR IGNORE INTO wormholes (system_a_id, system_b_id) VALUES (?, ?)', wormholes_to_insert)
-            # --- END OF WORMHOLE LOGIC ---
         
         conn.commit()
         return jsonify({'message': 'Sync successful!'})
@@ -479,6 +481,7 @@ def login():
     if user and user['password'] == password:
         session['user_id'], session['username'], session['faction_id'], session['is_admin'], session['is_developer'] = user['id'], user['username'], user['faction_id'], user['is_admin'], user.get('is_developer', False)
         
+        # --- NEW: Use the new flag to determine if button should show ---
         show_bulk_sync = (not user['initial_import_done']) and not user.get('is_developer', False)
         
         conn.close()
@@ -487,7 +490,8 @@ def login():
             'username': user['username'], 
             'is_admin': user['is_admin'], 
             'is_developer': user.get('is_developer', False),
-            'show_bulk_sync': show_bulk_sync
+            'show_bulk_sync': show_bulk_sync,
+            'last_known_system_id': user.get('last_known_system_id') # NEW
         })
     
     if conn: conn.close()
@@ -511,12 +515,15 @@ def logout(): session.clear(); return jsonify({'message': 'Logout successful'})
 def status():
     if 'user_id' in session:
         conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
+        user_id = session['user_id']
         faction_id = session['faction_id']
         is_developer = session.get('is_developer', False)
         
-        cursor.execute(f"SELECT initial_import_done FROM factions WHERE id = {param}", (faction_id,))
-        faction = cursor.fetchone()
-        show_bulk_sync = (faction and not faction['initial_import_done']) and not is_developer
+        # --- NEW: Query users and factions table ---
+        cursor.execute(f"SELECT u.last_known_system_id, f.initial_import_done FROM users u JOIN factions f ON u.faction_id = f.id WHERE u.id = {param}", (user_id,))
+        user_data = cursor.fetchone()
+        
+        show_bulk_sync = (user_data and not user_data['initial_import_done']) and not is_developer
         
         conn.close()
         return jsonify({
@@ -524,7 +531,8 @@ def status():
             'username': session['username'], 
             'is_admin': session.get('is_admin', False), 
             'is_developer': is_developer,
-            'show_bulk_sync': show_bulk_sync
+            'show_bulk_sync': show_bulk_sync,
+            'last_known_system_id': user_data.get('last_known_system_id') if user_data else None # NEW
         })
     return jsonify({'logged_in': False})
 
@@ -631,7 +639,8 @@ def add_wormhole():
 def delete_wormhole():
     data = request.get_json(); id_a, id_b = data.get('system_a_id'), data.get('system_b_id')
     if not id_a or not id_b: return jsonify({'error': 'Both system IDs are required'}), 400
-    conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'; cursor.execute(f"DELETE FROM wormholes WHERE system_a_id = {param} AND system_b_id = {param}", (min(id_a, id_b), max(id_a, id_b))); conn.commit(); conn.close()
+    conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?';
+    cursor.execute(f"DELETE FROM wormholes WHERE system_a_id = {param} AND system_b_id = {param}", (min(id_a, id_b), max(id_a, id_b))); conn.commit(); conn.close()
     return jsonify({'message': 'Wormhole deleted successfully'})
     
 @app.route('/api/systems')
