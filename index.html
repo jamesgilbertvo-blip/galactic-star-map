@@ -117,7 +117,7 @@
                 </div>
                 <form id="route-form" class="space-y-4">
                     <input type="text" id="start-system-input" list="system-list" class="w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="Start System or #Position...">
-                    <input type="text" id="end-system-input" list="system-list" class="w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="End System or #Position...">
+                    <input type="text" id="end-system-input" list="system-list" class="w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-5A00" placeholder="End System or #Position...">
                     <datalist id="system-list"></datalist>
                     <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md">Find Shortest Path</button>
                 </form>
@@ -131,12 +131,12 @@
                     </form>
                     <div class="space-y-2">
                          <div class="flex items-center">
-                            <input id="filter-catapults" type="checkbox" checked class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
-                            <label for="filter-catapults" class="ml-2 block text-sm text-gray-300">Show Catapult Ranges</label>
-                        </div>
+                             <input id="filter-catapults" type="checkbox" checked class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
+                             <label for="filter-catapults" class="ml-2 block text-sm text-gray-300">Show Catapult Ranges</label>
+                         </div>
                         <div class="flex items-center">
-                            <input id="filter-wormholes" type="checkbox" checked class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
-                            <label for="filter-wormholes" class="ml-2 block text-sm text-gray-300">Show Wormholes</label>
+                             <input id="filter-wormholes" type="checkbox" checked class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
+                             <label for="filter-wormholes" class="ml-2 block text-sm text-gray-300">Show Wormholes</label>
                         </div>
                     </div>
                 </div>
@@ -386,7 +386,7 @@
             dom.menuButton.setAttribute('aria-expanded', !isExpanded);
         }
         
-        // NEW: "Center on Me" function
+        // --- MODIFIED: "Center on Me" function with flash ---
         function centerOnMyLocation() {
             if (!lastKnownSystemId) {
                 alert("No location known. Please sync your data first.");
@@ -401,8 +401,21 @@
             viewTransform.scale = 1.0; // Set a reasonable zoom
             viewTransform.translateX = (dom.canvas.width / 2) - (targetSystem.x * viewTransform.scale);
             viewTransform.translateY = (dom.canvas.height / 2) - (targetSystem.y * viewTransform.scale);
+            
+            // --- MODIFICATION: Add flash effect ---
+            highlightedSearchSystemId = lastKnownSystemId; // Reuse existing flash logic
             drawMap();
             localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform));
+            
+            setTimeout(() => {
+                // Only clear the highlight if it's still the one we set,
+                // in case the user searched for something else immediately.
+                if (highlightedSearchSystemId === lastKnownSystemId) {
+                    highlightedSearchSystemId = null;
+                    drawMap();
+                }
+            }, 2500); // Flash for 2.5 seconds
+            // --- END MODIFICATION ---
         }
 
         function clearRouteDisplay() { calculatedPathNodes = []; dom.routeDetailsContainer.innerHTML = ''; dom.startSystemInput.value = ''; dom.endSystemInput.value = ''; drawMap(); }
