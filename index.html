@@ -117,7 +117,7 @@
                 </div>
                 <form id="route-form" class="space-y-4">
                     <input type="text" id="start-system-input" list="system-list" class="w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="Start System or #Position...">
-                    <input type="text" id="end-system-input" list="system-list" class="w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-5A00" placeholder="End System or #Position...">
+                    <input type="text" id="end-system-input" list="system-list" class="w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="End System or #Position...">
                     <datalist id="system-list"></datalist>
                     <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md">Find Shortest Path</button>
                 </form>
@@ -181,7 +181,12 @@
         let filterShowCatapults = true;
         let filterShowWormholes = true;
         let showBulkSyncButton = false;
-        let lastKnownSystemId = null; // NEW: Store location
+        let lastKnownSystemId = null; 
+        
+        // --- NEW: State for "Center on Me" animation ---
+        let pingAnimation = null; // Will store { systemId, startTime, duration }
+        let isAnimatingPing = false; // Guard to prevent multiple animation loops
+        // --- END NEW ---
 
         const dom = { 
             loginView: document.getElementById('login-view'), mapView: document.getElementById('map-view'), registerView: document.getElementById('register-view'), 
@@ -204,7 +209,7 @@
             filterWormholes: document.getElementById('filter-wormholes'),
             bulkSyncButton: document.getElementById('bulk-sync-button'),
             bulkSyncText: document.getElementById('bulk-sync-text'),
-            centerMeButton: document.getElementById('center-me-button') // NEW: Center button
+            centerMeButton: document.getElementById('center-me-button')
         };
 
         const apiFetch = (url, options = {}) => { options.credentials = 'include'; return fetch(url, options); };
@@ -222,10 +227,10 @@
                 const d = await r.json(); 
                 dom.syncStatus.textContent = d.message; 
                 if (r.ok) {
-                    const statusRes = await apiFetch('/status'); // Re-fetch status to get new last_known_system_id
+                    const statusRes = await apiFetch('/status'); 
                     const statusData = await statusRes.json();
                     if (statusData.logged_in) {
-                        lastKnownSystemId = statusData.last_known_system_id; // Update location
+                        lastKnownSystemId = statusData.last_known_system_id; 
                     }
                     await fetchMapData(false, oldSystemIds);
                 }
@@ -318,7 +323,7 @@
             dom.loginView.classList.add('hidden'); dom.registerView.classList.add('hidden'); dom.mapView.classList.remove('hidden');
             dom.welcomeMessage.textContent = `Welcome, ${data.username}`;
             showBulkSyncButton = data.show_bulk_sync || false;
-            lastKnownSystemId = data.last_known_system_id || null; // NEW: Store location
+            lastKnownSystemId = data.last_known_system_id || null; 
 
             let adminBtn = document.getElementById('admin-button');
             if (data.is_admin && !adminBtn) { adminBtn = document.createElement('a'); adminBtn.id = 'admin-button'; adminBtn.href = '/admin'; adminBtn.textContent = 'Admin'; adminBtn.className = 'px-3 py-1 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700'; dom.userControls.prepend(adminBtn); } 
@@ -386,7 +391,25 @@
             dom.menuButton.setAttribute('aria-expanded', !isExpanded);
         }
         
-        // --- MODIFIED: "Center on Me" function with flash ---
+        // --- NEW: Animation loop for the ping ---
+        function animatePing() {
+            isAnimatingPing = true;
+            
+            const elapsed = Date.now() - pingAnimation.startTime;
+            
+            if (elapsed > pingAnimation.duration) {
+                // Animation finished
+                pingAnimation = null;
+                isAnimatingPing = false;
+                drawMap(); // Final draw to clear the circle
+                return;
+            }
+            
+            drawMap(); // Redraw the map (which will include the ping)
+            requestAnimationFrame(animatePing); // Request next frame
+        }
+
+        // --- MODIFIED: "Center on Me" function ---
         function centerOnMyLocation() {
             if (!lastKnownSystemId) {
                 alert("No location known. Please sync your data first.");
@@ -402,20 +425,23 @@
             viewTransform.translateX = (dom.canvas.width / 2) - (targetSystem.x * viewTransform.scale);
             viewTransform.translateY = (dom.canvas.height / 2) - (targetSystem.y * viewTransform.scale);
             
-            // --- MODIFICATION: Add flash effect ---
-            highlightedSearchSystemId = lastKnownSystemId; // Reuse existing flash logic
-            drawMap();
+            // Pan/zoom first
+            drawMap(); 
             localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform));
             
-            setTimeout(() => {
-                // Only clear the highlight if it's still the one we set,
-                // in case the user searched for something else immediately.
-                if (highlightedSearchSystemId === lastKnownSystemId) {
-                    highlightedSearchSystemId = null;
-                    drawMap();
-                }
-            }, 2500); // Flash for 2.5 seconds
-            // --- END MODIFICATION ---
+            // Clear any old search highlight
+            highlightedSearchSystemId = null;
+            
+            // Set up and start the new ping animation
+            pingAnimation = {
+                systemId: lastKnownSystemId,
+                startTime: Date.now(),
+                duration: 1200 // 1.2 second animation
+            };
+            
+            if (!isAnimatingPing) {
+                animatePing();
+            }
         }
 
         function clearRouteDisplay() { calculatedPathNodes = []; dom.routeDetailsContainer.innerHTML = ''; dom.startSystemInput.value = ''; dom.endSystemInput.value = ''; drawMap(); }
@@ -532,6 +558,39 @@
                     ctx.fillText(node.name, node.x, node.y - (size + 4 / viewTransform.scale));
                 }
             });
+
+            // --- NEW: Draw the ping animation ---
+            if (pingAnimation && systems[pingAnimation.systemId]) {
+                const sys = systems[pingAnimation.systemId];
+                const elapsed = Date.now() - pingAnimation.startTime;
+                const progress = elapsed / pingAnimation.duration; // 0.0 to 1.0
+                
+                // This is the "zooming in from the edge" circle
+                const maxRadius = (Math.max(dom.canvas.width, dom.canvas.height) / 2) / viewTransform.scale;
+                const currentRadius = maxRadius * (1 - progress); // Shrinks from max to 0
+                const currentAlpha = 1 - (progress * 0.8); // Fades, but starts strong
+                
+                ctx.strokeStyle = `rgba(245, 158, 11, ${currentAlpha})`; // Orange
+                ctx.lineWidth = 4 / viewTransform.scale;
+                ctx.beginPath();
+                ctx.arc(sys.x, sys.y, currentRadius, 0, Math.PI * 2);
+                ctx.stroke();
+
+                // Add a second, slightly delayed ring for more "pop"
+                const delay = 150; // 150ms delay
+                if (elapsed > delay) {
+                    const progress2 = (elapsed - delay) / (pingAnimation.duration - delay);
+                    const currentRadius2 = maxRadius * (1 - progress2);
+                    const currentAlpha2 = 1 - (progress2 * 0.8);
+                    
+                    ctx.lineWidth = 2 / viewTransform.scale; // Thinner
+                    ctx.strokeStyle = `rgba(245, 158, 11, ${currentAlpha2})`; // Orange
+                    ctx.beginPath();
+                    ctx.arc(sys.x, sys.y, currentRadius2, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+            }
+            // --- END NEW ---
 
             ctx.restore();
         }
@@ -665,7 +724,7 @@
             dom.toggleUnclaimedNames.addEventListener('change', (e) => { showUnclaimedNames = e.target.checked; drawMap(); });
             dom.resetViewButton.addEventListener('click', handleResetView);
             dom.menuButton.addEventListener('click', toggleSidePanel);
-            dom.centerMeButton.addEventListener('click', centerOnMyLocation); // NEW
+            dom.centerMeButton.addEventListener('click', centerOnMyLocation); // Hooked up
             
             dom.routeForm.addEventListener('submit', (e) => {
                 e.preventDefault();
