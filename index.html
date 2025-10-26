@@ -183,10 +183,11 @@
         let showBulkSyncButton = false;
         let lastKnownSystemId = null; 
         
-        // --- NEW: State for "Center on Me" animation ---
-        let pingAnimation = null; // Will store { systemId, startTime, duration }
-        let isAnimatingPing = false; // Guard to prevent multiple animation loops
-        // --- END NEW ---
+        // --- State for "Center on Me" animation ---
+        let pingAnimation = null; 
+        let isAnimatingPing = false; 
+        let pingAnimationFrameId = null; // NEW: Store animation frame ID
+        // --- END ---
 
         const dom = { 
             loginView: document.getElementById('login-view'), mapView: document.getElementById('map-view'), registerView: document.getElementById('register-view'), 
@@ -391,22 +392,31 @@
             dom.menuButton.setAttribute('aria-expanded', !isExpanded);
         }
         
-        // --- NEW: Animation loop for the ping ---
+        // --- MODIFIED: Animation loop for the ping ---
         function animatePing() {
             isAnimatingPing = true;
             
+            // If pingAnimation became null (e.g., button clicked again quickly), stop.
+            if (!pingAnimation) {
+                 isAnimatingPing = false;
+                 pingAnimationFrameId = null;
+                 drawMap(); // Ensure final state is clean
+                 return;
+            }
+
             const elapsed = Date.now() - pingAnimation.startTime;
             
             if (elapsed > pingAnimation.duration) {
                 // Animation finished
                 pingAnimation = null;
                 isAnimatingPing = false;
+                pingAnimationFrameId = null;
                 drawMap(); // Final draw to clear the circle
                 return;
             }
             
             drawMap(); // Redraw the map (which will include the ping)
-            requestAnimationFrame(animatePing); // Request next frame
+            pingAnimationFrameId = requestAnimationFrame(animatePing); // Request next frame and store ID
         }
 
         // --- MODIFIED: "Center on Me" function ---
@@ -421,7 +431,7 @@
                 return;
             }
             
-            viewTransform.scale = 1.0; // Set a reasonable zoom
+            viewTransform.scale = 1.0; 
             viewTransform.translateX = (dom.canvas.width / 2) - (targetSystem.x * viewTransform.scale);
             viewTransform.translateY = (dom.canvas.height / 2) - (targetSystem.y * viewTransform.scale);
             
@@ -432,6 +442,16 @@
             // Clear any old search highlight
             highlightedSearchSystemId = null;
             
+            // --- MODIFICATION: Always reset and restart animation ---
+            // If an animation is running, cancel its next frame
+            if (isAnimatingPing && pingAnimationFrameId) {
+                cancelAnimationFrame(pingAnimationFrameId);
+            }
+            // Reset state regardless of whether it was running
+            pingAnimation = null;
+            isAnimatingPing = false;
+            pingAnimationFrameId = null;
+
             // Set up and start the new ping animation
             pingAnimation = {
                 systemId: lastKnownSystemId,
@@ -439,9 +459,9 @@
                 duration: 1200 // 1.2 second animation
             };
             
-            if (!isAnimatingPing) {
-                animatePing();
-            }
+            // Always start the animation loop now
+            animatePing(); 
+            // --- END MODIFICATION ---
         }
 
         function clearRouteDisplay() { calculatedPathNodes = []; dom.routeDetailsContainer.innerHTML = ''; dom.startSystemInput.value = ''; dom.endSystemInput.value = ''; drawMap(); }
@@ -559,38 +579,40 @@
                 }
             });
 
-            // --- NEW: Draw the ping animation ---
+            // --- Draw the ping animation ---
             if (pingAnimation && systems[pingAnimation.systemId]) {
                 const sys = systems[pingAnimation.systemId];
                 const elapsed = Date.now() - pingAnimation.startTime;
                 const progress = elapsed / pingAnimation.duration; // 0.0 to 1.0
                 
-                // This is the "zooming in from the edge" circle
                 const maxRadius = (Math.max(dom.canvas.width, dom.canvas.height) / 2) / viewTransform.scale;
-                const currentRadius = maxRadius * (1 - progress); // Shrinks from max to 0
-                const currentAlpha = 1 - (progress * 0.8); // Fades, but starts strong
+                const currentRadius = maxRadius * (1 - progress); 
+                const currentAlpha = 1 - (progress * 0.8); 
                 
-                ctx.strokeStyle = `rgba(245, 158, 11, ${currentAlpha})`; // Orange
-                ctx.lineWidth = 4 / viewTransform.scale;
-                ctx.beginPath();
-                ctx.arc(sys.x, sys.y, currentRadius, 0, Math.PI * 2);
-                ctx.stroke();
+                if (currentRadius > 0 && currentAlpha > 0) { // Only draw if visible
+                    ctx.strokeStyle = `rgba(245, 158, 11, ${currentAlpha})`; 
+                    ctx.lineWidth = 4 / viewTransform.scale;
+                    ctx.beginPath();
+                    ctx.arc(sys.x, sys.y, currentRadius, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
 
-                // Add a second, slightly delayed ring for more "pop"
-                const delay = 150; // 150ms delay
+                const delay = 150; 
                 if (elapsed > delay) {
                     const progress2 = (elapsed - delay) / (pingAnimation.duration - delay);
                     const currentRadius2 = maxRadius * (1 - progress2);
                     const currentAlpha2 = 1 - (progress2 * 0.8);
                     
-                    ctx.lineWidth = 2 / viewTransform.scale; // Thinner
-                    ctx.strokeStyle = `rgba(245, 158, 11, ${currentAlpha2})`; // Orange
-                    ctx.beginPath();
-                    ctx.arc(sys.x, sys.y, currentRadius2, 0, Math.PI * 2);
-                    ctx.stroke();
+                    if (currentRadius2 > 0 && currentAlpha2 > 0) { // Only draw if visible
+                        ctx.lineWidth = 2 / viewTransform.scale; 
+                        ctx.strokeStyle = `rgba(245, 158, 11, ${currentAlpha2})`; 
+                        ctx.beginPath();
+                        ctx.arc(sys.x, sys.y, currentRadius2, 0, Math.PI * 2);
+                        ctx.stroke();
+                    }
                 }
             }
-            // --- END NEW ---
+            // --- END ---
 
             ctx.restore();
         }
@@ -724,7 +746,7 @@
             dom.toggleUnclaimedNames.addEventListener('change', (e) => { showUnclaimedNames = e.target.checked; drawMap(); });
             dom.resetViewButton.addEventListener('click', handleResetView);
             dom.menuButton.addEventListener('click', toggleSidePanel);
-            dom.centerMeButton.addEventListener('click', centerOnMyLocation); // Hooked up
+            dom.centerMeButton.addEventListener('click', centerOnMyLocation); 
             
             dom.routeForm.addEventListener('submit', (e) => {
                 e.preventDefault();
