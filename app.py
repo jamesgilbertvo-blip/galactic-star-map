@@ -10,6 +10,7 @@ import sys
 import heapq
 from functools import wraps
 from cryptography.fernet import Fernet
+import decimal # Use decimal for precise position comparisons
 
 # --- CONFIGURATION ---
 DATABASE_URL = os.environ.get('DATABASE_URL')
@@ -39,42 +40,49 @@ POI_API_URL = "https://play.textspaced.com/api/lookup/points_of_interest/"
 # --- DATABASE CONNECTION & SETUP ---
 def get_db_connection():
     if DATABASE_URL:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = psycopg2.connect(DATABASE_URL, connect_timeout=10) # Added timeout
+        # Use Decimal type for position to avoid floating point issues
+        psycopg2.extensions.register_adapter(decimal.Decimal, psycopg2.extensions.AsIs)
         return conn, conn.cursor(cursor_factory=RealDictCursor)
     else:
         conn = sqlite3.connect('starmap.db')
         conn.row_factory = sqlite3.Row
         return conn, conn.cursor()
 
+# --- MODIFIED: Enhanced setup_database_if_needed for migrations ---
 def setup_database_if_needed():
     conn, cursor = get_db_connection()
     pg_compat = bool(DATABASE_URL)
+    param = '%s' if pg_compat else '?'
+
+    print("Checking database schema...")
+
+    # Create core tables IF THEY DON'T EXIST
     try:
-        cursor.execute("SELECT id FROM users LIMIT 1")
-    except (sqlite3.OperationalError, psycopg2.errors.UndefinedTable):
-        print("Database tables not found. Creating schema from scratch...")
-        conn.rollback()
-        
         user_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
         faction_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
 
-        cursor.execute(f'CREATE TABLE factions (id {faction_id_type}, name TEXT UNIQUE NOT NULL, initial_import_done BOOLEAN DEFAULT FALSE NOT NULL)')
+        cursor.execute(f'CREATE TABLE IF NOT EXISTS factions (id {faction_id_type}, name TEXT UNIQUE NOT NULL, initial_import_done BOOLEAN DEFAULT FALSE NOT NULL)')
         cursor.execute(f'''
-        CREATE TABLE users (
+        CREATE TABLE IF NOT EXISTS users (
             id {user_id_type},
             username TEXT UNIQUE NOT NULL, password TEXT NOT NULL, api_key TEXT,
             faction_id INTEGER NOT NULL REFERENCES factions(id),
             is_admin BOOLEAN DEFAULT FALSE NOT NULL,
             is_developer BOOLEAN DEFAULT FALSE NOT NULL,
-            last_known_system_id INTEGER -- NEW COLUMN
+            last_known_system_id INTEGER
         )''')
-        cursor.execute('CREATE TABLE systems (id INTEGER PRIMARY KEY, name TEXT NOT NULL, x REAL NOT NULL, y REAL NOT NULL, position REAL NOT NULL UNIQUE, catapult_radius REAL DEFAULT 0, owner_faction_id INTEGER REFERENCES factions(id))')
-        cursor.execute('CREATE TABLE faction_discovered_systems (faction_id INTEGER NOT NULL REFERENCES factions(id), system_id INTEGER NOT NULL REFERENCES systems(id), PRIMARY KEY (faction_id, system_id))')
-        cursor.execute('CREATE TABLE wormholes (system_a_id INTEGER NOT NULL REFERENCES systems(id), system_b_id INTEGER NOT NULL REFERENCES systems(id), PRIMARY KEY (system_a_id, system_b_id))')
-        
-        print("Core tables created.")
-    
-    try:
+        # Use NUMERIC for position in Postgres for precision
+        position_type = 'NUMERIC(10, 2)' if pg_compat else 'REAL'
+        cursor.execute(f'''
+        CREATE TABLE IF NOT EXISTS systems (
+            id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+            x REAL NOT NULL, y REAL NOT NULL, position {position_type} NOT NULL UNIQUE,
+            catapult_radius REAL DEFAULT 0, owner_faction_id INTEGER REFERENCES factions(id),
+            region_name TEXT DEFAULT NULL -- Initially default to NULL
+        )''')
+        cursor.execute('CREATE TABLE IF NOT EXISTS faction_discovered_systems (faction_id INTEGER NOT NULL REFERENCES factions(id), system_id INTEGER NOT NULL REFERENCES systems(id), PRIMARY KEY (faction_id, system_id))')
+        cursor.execute('CREATE TABLE IF NOT EXISTS wormholes (system_a_id INTEGER NOT NULL REFERENCES systems(id), system_b_id INTEGER NOT NULL REFERENCES systems(id), PRIMARY KEY (system_a_id, system_b_id))')
         cursor.execute(f'''
         CREATE TABLE IF NOT EXISTS faction_relationships (
             faction_a_id INTEGER NOT NULL REFERENCES factions(id),
@@ -83,14 +91,77 @@ def setup_database_if_needed():
             PRIMARY KEY (faction_a_id, faction_b_id),
             CHECK (faction_a_id < faction_b_id)
         )''')
-        print("Checked for 'faction_relationships' table.")
-    except (sqlite3.OperationalError, psycopg2.errors.UndefinedTable) as e:
-        print(f"Error creating faction_relationships table: {e}")
-        conn.rollback()
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS region_effects (
+            region_name TEXT PRIMARY KEY,
+            effect_name TEXT NOT NULL
+        )''')
+        conn.commit()
+        print("Core table existence check complete.")
 
-    conn.commit()
+    except (sqlite3.OperationalError, psycopg2.Error) as e:
+        print(f"Error during initial table creation checks: {e}")
+        conn.rollback()
+        conn.close()
+        raise # Re-raise error if basic tables fail
+
+    # --- Schema Migration: Add region_name to systems if missing ---
+    try:
+        column_exists = False
+        if pg_compat:
+            cursor.execute("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_schema = 'public' AND table_name = 'systems' AND column_name = 'region_name';
+            """)
+            if cursor.fetchone():
+                column_exists = True
+        else: # SQLite
+            cursor.execute("PRAGMA table_info(systems);")
+            columns = cursor.fetchall()
+            if any(col['name'] == 'region_name' for col in columns):
+                 column_exists = True
+
+        if not column_exists:
+            print("Migrating schema: Adding 'region_name' column to 'systems' table...")
+            cursor.execute("ALTER TABLE systems ADD COLUMN region_name TEXT DEFAULT NULL;")
+            conn.commit()
+            print("'region_name' column added successfully.")
+        else:
+             print("'region_name' column already exists in 'systems'.")
+
+    except (sqlite3.OperationalError, psycopg2.Error) as e:
+        print(f"Error during schema migration (adding region_name): {e}")
+        conn.rollback()
+        # Don't raise here, maybe the app can still run without the column temporarily
+
+    # --- Schema Migration: Ensure position column type is correct for PG ---
+    if pg_compat:
+        try:
+             cursor.execute("""
+                 SELECT data_type 
+                 FROM information_schema.columns 
+                 WHERE table_schema = 'public' AND table_name = 'systems' AND column_name = 'position';
+             """)
+             col_info = cursor.fetchone()
+             if col_info and col_info['data_type'] != 'numeric':
+                 print("Migrating schema: Changing 'position' column type to NUMERIC(10, 2)...")
+                 # This might lock the table for a while on large datasets
+                 cursor.execute("ALTER TABLE systems ALTER COLUMN position TYPE NUMERIC(10, 2);")
+                 conn.commit()
+                 print("'position' column type updated.")
+             elif col_info:
+                 print("'position' column type is already correct (NUMERIC).")
+             else:
+                 print("Warning: Could not verify 'position' column type.")
+        except (psycopg2.Error) as e:
+             print(f"Error during schema migration (position type): {e}")
+             conn.rollback()
+
+
     conn.close()
-    print("Database setup check complete.")
+    print("Database setup and migration check complete.")
+# --- END MODIFIED ---
 
 
 # --- Admin Decorator & Utilities ---
@@ -103,7 +174,9 @@ def admin_required(f):
 
 def get_spiral_coords(position):
     if position is None: return 0, 0
-    angle = position * 0.1; radius = position * 50 / 1000
+    # Ensure position is treated as float for calculations
+    pos_float = float(position)
+    angle = pos_float * 0.1; radius = pos_float * 50 / 1000
     return radius * math.cos(angle), radius * math.sin(angle)
 
 def fetch_api_data(url, api_key):
@@ -114,7 +187,7 @@ def fetch_api_data(url, api_key):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=15) # Added timeout
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
@@ -130,24 +203,33 @@ def bulk_add_systems(systems_list, faction_id, cursor, pg_compat, param):
     
     for system_data in systems_list:
         sys_id = system_data.get('system_id')
-        sys_pos = system_data.get('system_position')
+        sys_pos_str = system_data.get('system_position') # Get as string initially
         
-        if not sys_id or not sys_pos:
+        if not sys_id or sys_pos_str is None: # Check for None explicitly
             continue
         
-        sys_id_int = int(sys_id)
-        sys_pos_float = float(sys_pos)
-        sys_name = system_data.get('system_name') or f"System {sys_id_int}"
-        x, y = get_spiral_coords(sys_pos_float)
-        
-        systems_to_insert.append((sys_id_int, sys_name, x, y, sys_pos_float))
-        links_to_insert.append((faction_id, sys_id_int))
+        try:
+            sys_id_int = int(sys_id)
+            # Use Decimal for position
+            sys_pos_decimal = decimal.Decimal(sys_pos_str)
+            sys_name = system_data.get('system_name') or f"System {sys_id_int}"
+            x, y = get_spiral_coords(sys_pos_decimal) # Pass Decimal here
+            
+            # Append Decimal for position
+            systems_to_insert.append((sys_id_int, sys_name, x, y, sys_pos_decimal))
+            links_to_insert.append((faction_id, sys_id_int))
+        except (ValueError, decimal.InvalidOperation) as e:
+            print(f"Skipping system due to invalid data: id={sys_id}, pos='{sys_pos_str}'. Error: {e}", file=sys.stderr)
+            continue
     
     if systems_to_insert:
+        # Adjust INSERT statement for position type
         if pg_compat:
             cursor.executemany(f'INSERT INTO systems (id, name, x, y, position) VALUES ({param}, {param}, {param}, {param}, {param}) ON CONFLICT(id) DO NOTHING', systems_to_insert)
         else:
-            cursor.executemany('INSERT OR IGNORE INTO systems (id, name, x, y, position) VALUES (?, ?, ?, ?, ?)', systems_to_insert)
+            # SQLite still uses REAL, convert Decimal back to float just for insert
+            systems_to_insert_sqlite = [(d[0], d[1], d[2], d[3], float(d[4])) for d in systems_to_insert]
+            cursor.executemany('INSERT OR IGNORE INTO systems (id, name, x, y, position) VALUES (?, ?, ?, ?, ?)', systems_to_insert_sqlite)
     
     if links_to_insert:
         if pg_compat:
@@ -158,6 +240,7 @@ def bulk_add_systems(systems_list, faction_id, cursor, pg_compat, param):
     return len(links_to_insert)
 
 # --- ROUTES ---
+# --- MODIFIED: /api/sync with region logic ---
 @app.route('/api/sync', methods=['POST'])
 def sync_data():
     if 'user_id' not in session or session.get('is_developer'): return jsonify({'error': 'Not authenticated or developer accounts cannot sync'}), 401
@@ -175,9 +258,11 @@ def sync_data():
         if not encrypted_api_key: return jsonify({'message': 'API key not found.'}), 400
         api_key = fernet.decrypt(encrypted_api_key.encode()).decode()
 
+        # Fetch faction info first to get faction_id
         faction_info = fetch_api_data(FACTION_API_URL, api_key)
-        faction_name = faction_info.get('info', {}).get('name')
-        if not faction_name: return jsonify({'message': 'Could not verify faction with game API.'}), 500
+        if not faction_info or 'info' not in faction_info or 'name' not in faction_info['info']:
+             return jsonify({'message': 'Could not verify faction with game API.'}), 500
+        faction_name = faction_info['info']['name']
 
         cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (faction_name,))
         faction_row = cursor.fetchone()
@@ -191,6 +276,7 @@ def sync_data():
         if user['faction_id'] != faction_id:
             cursor.execute(f"UPDATE users SET faction_id = {param} WHERE id = {param}", (faction_id, user_id)); session['faction_id'] = faction_id
         
+        # Sync relationships
         relationship_data = fetch_api_data(RELATIONSHIPS_API_URL, api_key)
         if relationship_data:
             cursor.execute(f"DELETE FROM faction_relationships WHERE faction_a_id = {param} OR faction_b_id = {param}", (faction_id, faction_id))
@@ -209,116 +295,215 @@ def sync_data():
                         all_relationships_from_api.append({'name': item['faction_name'], 'status': 'war'})
             
             for rel in all_relationships_from_api:
-                if rel['name'] == faction_name:
-                    continue
-
+                if rel['name'] == faction_name: continue # Skip self-relation
                 cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (rel['name'],))
                 other_fac_row = cursor.fetchone()
+                other_fac_id = None
                 if other_fac_row:
                     other_fac_id = other_fac_row['id']
                 else:
+                    try:
+                        if pg_compat:
+                            cursor.execute(f"INSERT INTO factions (name) VALUES ({param}) RETURNING id", (rel['name'],)); other_fac_id = cursor.fetchone()['id']
+                        else:
+                            cursor.execute("INSERT INTO factions (name) VALUES (?)", (rel['name'],)); other_fac_id = cursor.lastrowid
+                    except (sqlite3.IntegrityError, psycopg2.IntegrityError): # Handle race condition if another sync inserted it
+                         conn.rollback()
+                         cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (rel['name'],))
+                         other_fac_row = cursor.fetchone()
+                         if other_fac_row: other_fac_id = other_fac_row['id']
+                         else: raise # Re-raise if still not found
+                
+                if other_fac_id: # Ensure we found/created the other faction
+                    fac_a = min(faction_id, other_fac_id)
+                    fac_b = max(faction_id, other_fac_id)
                     if pg_compat:
-                        cursor.execute(f"INSERT INTO factions (name) VALUES ({param}) RETURNING id", (rel['name'],)); other_fac_id = cursor.fetchone()['id']
+                        cursor.execute(f"INSERT INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES ({param}, {param}, {param}) ON CONFLICT DO NOTHING", (fac_a, fac_b, rel['status']))
                     else:
-                        cursor.execute("INSERT INTO factions (name) VALUES (?)", (rel['name'],)); other_fac_id = cursor.lastrowid
-                
-                fac_a = min(faction_id, other_fac_id)
-                fac_b = max(faction_id, other_fac_id)
-                
-                if pg_compat:
-                    cursor.execute(f"INSERT INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES ({param}, {param}, {param}) ON CONFLICT DO NOTHING", (fac_a, fac_b, rel['status']))
-                else:
-                    cursor.execute("INSERT OR IGNORE INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES (?, ?, ?)", (fac_a, fac_b, rel['status']))
+                        cursor.execute("INSERT OR IGNORE INTO faction_relationships (faction_a_id, faction_b_id, status) VALUES (?, ?, ?)", (fac_a, fac_b, rel['status']))
 
+        # Fetch system data
         current_system_data = fetch_api_data(CURRENT_SYSTEM_API_URL, api_key)
         systems_data = fetch_api_data(SYSTEMS_API_URL, api_key)
         wormholes_data = fetch_api_data(WORMHOLE_API_URL, api_key)
         structures_data = fetch_api_data(STRUCTURES_API_URL, api_key)
 
-        if not any([current_system_data, systems_data, wormholes_data, structures_data]):
-             return jsonify({'message': 'Failed to fetch any data from game API.'}), 500
+        if not current_system_data or 'system' not in current_system_data:
+             return jsonify({'message': 'Failed to fetch current system data from game API.'}), 500
 
-        all_systems = {}
-        current_system_id = None 
-        if current_system_data and 'system' in current_system_data:
-            for sys_id, sys_info in current_system_data['system'].items(): 
-                current_system_id = int(sys_id) 
-                all_systems[current_system_id] = {'system_id': current_system_id, 'system_name': sys_info['system_name'], 'system_position': sys_info['system_position']}
+        # Process current system first (crucial for region info)
+        current_system_id = None
+        current_sys_details = None
+        current_sys_pos_str = None
+        region_name = None
+        region_effect_name = None
         
+        for sys_id_str, sys_info in current_system_data['system'].items(): 
+            try:
+                current_system_id = int(sys_id_str) 
+                current_sys_details = sys_info
+                current_sys_pos_str = sys_info.get('system_position')
+                region_name = sys_info.get('region_name')
+                region_effect_name = sys_info.get('region_effect_name')
+                
+                if current_sys_pos_str is None:
+                     print(f"Warning: Current system {current_system_id} missing position data.", file=sys.stderr)
+                     continue # Skip if position is missing
+
+                # Use Decimal for position
+                current_sys_pos_decimal = decimal.Decimal(current_sys_pos_str)
+                x, y = get_spiral_coords(current_sys_pos_decimal)
+                
+                # Insert/Update current system in systems table
+                sys_name = sys_info.get('system_name') or f"System {current_system_id}"
+                if pg_compat:
+                     cursor.execute(f'''
+                         INSERT INTO systems (id, name, x, y, position, region_name) 
+                         VALUES ({param}, {param}, {param}, {param}, {param}, {param}) 
+                         ON CONFLICT(id) DO UPDATE SET 
+                             name = EXCLUDED.name, x = EXCLUDED.x, y = EXCLUDED.y, position = EXCLUDED.position, region_name = EXCLUDED.region_name
+                     ''', (current_system_id, sys_name, x, y, current_sys_pos_decimal, region_name))
+                else:
+                     cursor.execute('''
+                         INSERT OR REPLACE INTO systems (id, name, x, y, position, region_name) 
+                         VALUES (?, ?, ?, ?, ?, ?)
+                     ''', (current_system_id, sys_name, x, y, float(current_sys_pos_decimal), region_name))
+
+                # Link current system to faction
+                if pg_compat:
+                    cursor.execute(f'INSERT INTO faction_discovered_systems (faction_id, system_id) VALUES ({param}, {param}) ON CONFLICT DO NOTHING', (faction_id, current_system_id))
+                else:
+                    cursor.execute('INSERT OR IGNORE INTO faction_discovered_systems (faction_id, system_id) VALUES (?, ?)', (faction_id, current_system_id))
+
+            except (ValueError, decimal.InvalidOperation) as e:
+                 print(f"Error processing current system data for ID {sys_id_str}: {e}", file=sys.stderr)
+                 current_system_id = None # Invalidate if processing failed
+                 continue
+
+        if not current_system_id or current_sys_details is None or current_sys_pos_str is None:
+              return jsonify({'message': 'Could not process current system data from API response.'}), 500
+
+        # Now handle other discovered systems
+        all_nearby_systems = {} # system_id -> {system_id, system_name, system_position}
         if systems_data:
-            for s in systems_data: all_systems[s['system_id']] = s
+            for s in systems_data: 
+                if s.get('system_id') and s.get('system_position') is not None:
+                    all_nearby_systems[s['system_id']] = s
         if wormholes_data and 'stable' in wormholes_data:
             stable_wormholes = wormholes_data['stable'].values() if isinstance(wormholes_data['stable'], dict) else wormholes_data['stable']
             for wh in stable_wormholes:
-                if wh['from_system_id'] not in all_systems: all_systems[wh['from_system_id']] = {'system_id': wh['from_system_id'], 'system_name': wh['from_system_name'], 'system_position': wh['from_system_position']}
-                if wh['to_system_id'] not in all_systems: all_systems[wh['to_system_id']] = {'system_id': wh['to_system_id'], 'system_name': wh['to_system_name'], 'system_position': wh['to_system_position']}
+                for prefix in ['from', 'to']:
+                    sys_id = wh.get(f'{prefix}_system_id')
+                    sys_pos = wh.get(f'{prefix}_system_position')
+                    if sys_id and sys_pos is not None and sys_id not in all_nearby_systems:
+                         all_nearby_systems[sys_id] = {
+                             'system_id': sys_id, 
+                             'system_name': wh.get(f'{prefix}_system_name'), 
+                             'system_position': sys_pos
+                         }
         
-        if all_systems:
-            systems_to_insert = [(s['system_id'], s.get('system_name') or f"System {s['system_id']}", *get_spiral_coords(s.get('system_position')), s.get('system_position')) for s in all_systems.values()]
-            if pg_compat: cursor.executemany(f'INSERT INTO systems (id, name, x, y, position) VALUES ({param}, {param}, {param}, {param}, {param}) ON CONFLICT(id) DO NOTHING', systems_to_insert)
-            else: cursor.executemany('INSERT OR IGNORE INTO systems (id, name, x, y, position) VALUES (?, ?, ?, ?, ?)', systems_to_insert)
+        # Bulk insert/ignore nearby systems (excluding current system, already handled)
+        bulk_add_systems([s for s in all_nearby_systems.values() if s['system_id'] != current_system_id], faction_id, cursor, pg_compat, param)
+        
+        # --- NEW: Region Extrapolation Logic ---
+        if region_name and current_sys_pos_decimal is not None:
+             # Update region_effects table first
+             if region_effect_name:
+                 print(f"Updating region_effects: Region='{region_name}', Effect='{region_effect_name}'")
+                 if pg_compat:
+                     cursor.execute(f"INSERT INTO region_effects (region_name, effect_name) VALUES ({param}, {param}) ON CONFLICT (region_name) DO UPDATE SET effect_name = EXCLUDED.effect_name", (region_name, region_effect_name))
+                 else:
+                     cursor.execute("INSERT OR REPLACE INTO region_effects (region_name, effect_name) VALUES (?, ?)", (region_name, region_effect_name))
+             
+             # Calculate region range based on current system's position
+             region_size = decimal.Decimal('50.0')
+             region_start = (current_sys_pos_decimal // region_size) * region_size
+             region_end = region_start + region_size # Exclusive end
+             print(f"Extrapolating region '{region_name}' to systems with position >= {region_start} and < {region_end}")
 
-            if structures_data and current_system_id:
-                max_catapult_radius = 0
-                if isinstance(structures_data, dict):
-                    for structure in structures_data.values():
-                        if structure and isinstance(structure, dict) and structure.get("type_name") == "Null Space Catapult":
-                            current_radius = structure.get("quantity", 0)
-                            if current_radius > max_catapult_radius: max_catapult_radius = current_radius
-                cursor.execute(f"UPDATE systems SET catapult_radius = {param} WHERE id = {param}", (max_catapult_radius, current_system_id))
+             # Update all systems within this coordinate range
+             try:
+                 if pg_compat:
+                     cursor.execute(f"UPDATE systems SET region_name = {param} WHERE position >= {param} AND position < {param}", (region_name, region_start, region_end))
+                 else:
+                     # SQLite needs float for comparison
+                     cursor.execute("UPDATE systems SET region_name = ? WHERE position >= ? AND position < ?", (region_name, float(region_start), float(region_end)))
+                 print(f"Updated {cursor.rowcount} systems with region_name '{region_name}'.")
+             except Exception as update_err:
+                 print(f"Error during region extrapolation update: {update_err}", file=sys.stderr)
+                 conn.rollback() # Rollback just this update if it fails
+        # --- END NEW ---
 
-            if current_system_id:
-                # --- NEW: Save the user's last known location ---
-                cursor.execute(f"UPDATE users SET last_known_system_id = {param} WHERE id = {param}", (current_system_id, user_id))
-                session['last_known_system_id'] = current_system_id # Update session immediately
-                # --- END NEW ---
+        # Update catapult radius for current system
+        if structures_data:
+            max_catapult_radius = 0
+            if isinstance(structures_data, dict):
+                for structure in structures_data.values():
+                    if structure and isinstance(structure, dict) and structure.get("type_name") == "Null Space Catapult":
+                        current_radius = structure.get("quantity", 0)
+                        if current_radius > max_catapult_radius: max_catapult_radius = current_radius
+            cursor.execute(f"UPDATE systems SET catapult_radius = {param} WHERE id = {param}", (max_catapult_radius, current_system_id))
 
-                current_sys_details = list(current_system_data['system'].values())[0]
-                owner_faction_name = current_sys_details.get('system_faction_name')
-                owner_db_id = None
+        # Update owner faction for current system
+        owner_faction_name = current_sys_details.get('system_faction_name')
+        owner_db_id = None
+        if owner_faction_name:
+            cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (owner_faction_name,))
+            owner_row = cursor.fetchone()
+            if owner_row:
+                owner_db_id = owner_row['id']
+            else: 
+                try:
+                    if pg_compat:
+                        cursor.execute(f"INSERT INTO factions (name) VALUES ({param}) RETURNING id", (owner_faction_name,))
+                        owner_db_id = cursor.fetchone()['id']
+                    else:
+                        cursor.execute("INSERT INTO factions (name) VALUES (?)", (owner_faction_name,)); owner_db_id = cursor.lastrowid
+                except (sqlite3.IntegrityError, psycopg2.IntegrityError): # Handle race condition
+                     conn.rollback()
+                     cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (owner_faction_name,))
+                     owner_row = cursor.fetchone()
+                     if owner_row: owner_db_id = owner_row['id']
+                     else: raise # Re-raise if still not found
 
-                if owner_faction_name:
-                    cursor.execute(f"SELECT id FROM factions WHERE name = {param}", (owner_faction_name,))
-                    owner_row = cursor.fetchone()
-                    if owner_row:
-                        owner_db_id = owner_row['id']
-                    else: 
-                        if pg_compat:
-                            cursor.execute(f"INSERT INTO factions (name) VALUES ({param}) RETURNING id", (owner_faction_name,))
-                            owner_db_id = cursor.fetchone()['id']
-                        else:
-                            cursor.execute("INSERT INTO factions (name) VALUES (?)", (owner_faction_name,)); owner_db_id = cursor.lastrowid
-                
-                cursor.execute(f"UPDATE systems SET owner_faction_id = {param} WHERE id = {param}", (owner_db_id, current_system_id))
+        cursor.execute(f"UPDATE systems SET owner_faction_id = {param} WHERE id = {param}", (owner_db_id, current_system_id))
 
-            faction_systems_to_link = [(faction_id, sys_id) for sys_id in all_systems.keys()]
-            if pg_compat: cursor.executemany(f'INSERT INTO faction_discovered_systems (faction_id, system_id) VALUES ({param}, {param}) ON CONFLICT (faction_id, system_id) DO NOTHING', faction_systems_to_link)
-            else: cursor.executemany('INSERT OR IGNORE INTO faction_discovered_systems (faction_id, system_id) VALUES (?, ?)', faction_systems_to_link)
+        # Update user's last known location
+        cursor.execute(f"UPDATE users SET last_known_system_id = {param} WHERE id = {param}", (current_system_id, user_id))
+        session['last_known_system_id'] = current_system_id 
+        
+        # Sync wormholes connected to current system
+        cursor.execute(f"DELETE FROM wormholes WHERE system_a_id = {param} OR system_b_id = {param}", (current_system_id, current_system_id))
+        if wormholes_data and 'stable' in wormholes_data:
+            stable_wormholes = wormholes_data['stable'].values() if isinstance(wormholes_data['stable'], dict) else wormholes_data['stable']
+            wormholes_to_insert = []
+            known_system_ids = set(all_nearby_systems.keys()) | {current_system_id} # All systems we know about in this sync
             
-            system_ids_in_range = list(all_systems.keys())
-            if current_system_id:
-                cursor.execute(f"DELETE FROM wormholes WHERE system_a_id = {param} OR system_b_id = {param}", (current_system_id, current_system_id))
+            for wh in stable_wormholes:
+                from_id = wh.get('from_system_id')
+                to_id = wh.get('to_system_id')
+                # Only add if BOTH ends are known systems from this sync
+                if from_id and to_id and from_id in known_system_ids and to_id in known_system_ids:
+                    wormholes_to_insert.append((min(from_id, to_id), max(from_id, to_id)))
             
-            if wormholes_data and 'stable' in wormholes_data:
-                stable_wormholes = wormholes_data['stable'].values() if isinstance(wormholes_data['stable'], dict) else wormholes_data['stable']
-                wormholes_to_insert = []
-                for wh in stable_wormholes:
-                    if wh['from_system_id'] in system_ids_in_range and wh['to_system_id'] in system_ids_in_range:
-                        wormholes_to_insert.append((min(wh['from_system_id'], wh['to_system_id']), max(wh['from_system_id'], wh['to_system_id'])))
-                
-                if wormholes_to_insert:
-                    if pg_compat: 
-                        cursor.executemany(f'INSERT INTO wormholes (system_a_id, system_b_id) VALUES ({param}, {param}) ON CONFLICT DO NOTHING', wormholes_to_insert)
-                    else: 
-                        cursor.executemany('INSERT OR IGNORE INTO wormholes (system_a_id, system_b_id) VALUES (?, ?)', wormholes_to_insert)
+            if wormholes_to_insert:
+                if pg_compat: 
+                    cursor.executemany(f'INSERT INTO wormholes (system_a_id, system_b_id) VALUES ({param}, {param}) ON CONFLICT DO NOTHING', wormholes_to_insert)
+                else: 
+                    cursor.executemany('INSERT OR IGNORE INTO wormholes (system_a_id, system_b_id) VALUES (?, ?)', wormholes_to_insert)
         
         conn.commit()
         return jsonify({'message': 'Sync successful!'})
 
     except Exception as e:
-        conn.rollback(); print(f"ERROR in /api/sync: {e}", file=sys.stderr); return jsonify({'error': 'An internal error occurred during sync.'}), 500
+        conn.rollback(); 
+        print(f"ERROR in /api/sync: {e}", file=sys.stderr); 
+        import traceback
+        traceback.print_exc() # Print full traceback for debugging
+        return jsonify({'error': f'An internal error occurred during sync: {e}'}), 500
     finally:
         if conn: conn.close()
+# --- END MODIFIED ---
         
 @app.route('/register', methods=['POST'])
 def register():
@@ -481,7 +666,6 @@ def login():
     if user and user['password'] == password:
         session['user_id'], session['username'], session['faction_id'], session['is_admin'], session['is_developer'] = user['id'], user['username'], user['faction_id'], user['is_admin'], user.get('is_developer', False)
         
-        # --- NEW: Use the new flag to determine if button should show ---
         show_bulk_sync = (not user['initial_import_done']) and not user.get('is_developer', False)
         
         conn.close()
@@ -491,7 +675,7 @@ def login():
             'is_admin': user['is_admin'], 
             'is_developer': user.get('is_developer', False),
             'show_bulk_sync': show_bulk_sync,
-            'last_known_system_id': user.get('last_known_system_id') # NEW
+            'last_known_system_id': user.get('last_known_system_id') 
         })
     
     if conn: conn.close()
@@ -519,7 +703,6 @@ def status():
         faction_id = session['faction_id']
         is_developer = session.get('is_developer', False)
         
-        # --- NEW: Query users and factions table ---
         cursor.execute(f"SELECT u.last_known_system_id, f.initial_import_done FROM users u JOIN factions f ON u.faction_id = f.id WHERE u.id = {param}", (user_id,))
         user_data = cursor.fetchone()
         
@@ -532,7 +715,7 @@ def status():
             'is_admin': session.get('is_admin', False), 
             'is_developer': is_developer,
             'show_bulk_sync': show_bulk_sync,
-            'last_known_system_id': user_data.get('last_known_system_id') if user_data else None # NEW
+            'last_known_system_id': user_data.get('last_known_system_id') if user_data else None 
         })
     return jsonify({'logged_in': False})
 
@@ -576,7 +759,7 @@ def get_relationships():
 def add_relationship():
     data = request.get_json(); id_a, id_b, status = data.get('faction_a_id'), data.get('faction_b_id'), data.get('status')
     if not all([id_a, id_b, status]) or id_a == id_b or status not in ['allied', 'war']: return jsonify({'error': 'Invalid input'}), 400
-    faction_a_id, faction_b_id = min(id_a, id_b), max(id_a, id_b)
+    faction_a_id, faction_b_id = min(int(id_a), int(id_b)), max(int(id_a), int(id_b)) # Ensure integer comparison
     conn, cursor = get_db_connection(); pg_compat = bool(DATABASE_URL); param = '%s' if pg_compat else '?'
     try:
         if pg_compat:
@@ -592,7 +775,7 @@ def add_relationship():
 def delete_relationship():
     data = request.get_json(); id_a, id_b = data.get('faction_a_id'), data.get('faction_b_id')
     if not all([id_a, id_b]): return jsonify({'error': 'Invalid input'}), 400
-    faction_a_id, faction_b_id = min(id_a, id_b), max(id_a, id_b)
+    faction_a_id, faction_b_id = min(int(id_a), int(id_b)), max(int(id_a), int(id_b)) # Ensure integer comparison
     conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?';
     cursor.execute(f"DELETE FROM faction_relationships WHERE faction_a_id = {param} AND faction_b_id = {param}", (faction_a_id, faction_b_id))
     conn.commit(); conn.close(); return jsonify({'message': 'Relationship deleted'})
@@ -602,21 +785,32 @@ def update_system_owner():
     data = request.get_json(); system_id, owner_id = data.get('system_id'), data.get('owner_faction_id')
     if system_id is None: return jsonify({'error': 'system_id is required'}), 400
     conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?';
-    cursor.execute(f"UPDATE systems SET owner_faction_id = {param} WHERE id = {param}", (owner_id if owner_id != '0' else None, system_id))
+    owner_id_to_set = owner_id if owner_id not in ['0', '', None] else None # Ensure NULL for '0', empty or None
+    cursor.execute(f"UPDATE systems SET owner_faction_id = {param} WHERE id = {param}", (owner_id_to_set, system_id))
     conn.commit(); conn.close(); return jsonify({'message': f'System {system_id} owner updated.'})
 @app.route('/api/admin/systems')
 @admin_required
 def get_all_systems():
     conn, cursor = get_db_connection();
-    cursor.execute('SELECT s.id, s.name, s.position, s.catapult_radius, s.owner_faction_id, f.name as owner_name FROM systems s LEFT JOIN factions f ON s.owner_faction_id = f.id ORDER BY s.position ASC');
+    # Cast position to TEXT for consistent JSON output (esp. from NUMERIC)
+    position_col = 'CAST(s.position AS TEXT)' if bool(DATABASE_URL) else 's.position'
+    cursor.execute(f'SELECT s.id, s.name, {position_col} as position, s.catapult_radius, s.owner_faction_id, f.name as owner_name FROM systems s LEFT JOIN factions f ON s.owner_faction_id = f.id ORDER BY s.position ASC');
     systems_list = cursor.fetchall(); conn.close()
+    # Convert Decimal to string if needed (RealDictCursor might handle it)
+    for sys in systems_list:
+        if isinstance(sys.get('position'), decimal.Decimal):
+            sys['position'] = str(sys['position'])
     return jsonify(systems_list)
 @app.route('/api/admin/update_system', methods=['POST'])
 @admin_required
 def update_system():
     data = request.get_json(); system_id, new_radius = data.get('system_id'), data.get('catapult_radius')
     if system_id is None or new_radius is None: return jsonify({'error': 'system_id and catapult_radius are required'}), 400
-    conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'; cursor.execute(f"UPDATE systems SET catapult_radius = {param} WHERE id = {param}", (new_radius, system_id)); conn.commit(); conn.close()
+    try:
+         new_radius_float = float(new_radius)
+    except ValueError:
+         return jsonify({'error': 'catapult_radius must be a number'}), 400
+    conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'; cursor.execute(f"UPDATE systems SET catapult_radius = {param} WHERE id = {param}", (new_radius_float, system_id)); conn.commit(); conn.close()
     return jsonify({'message': f'System {system_id} updated successfully.'})
 @app.route('/api/admin/wormholes')
 @admin_required
@@ -626,43 +820,111 @@ def get_all_wormholes():
 @app.route('/api/admin/add_wormhole', methods=['POST'])
 @admin_required
 def add_wormhole():
-    data = request.get_json(); id_a, id_b = data.get('system_a_id'), data.get('system_b_id')
-    if not id_a or not id_b: return jsonify({'error': 'Both system IDs are required'}), 400
+    data = request.get_json(); id_a_str, id_b_str = data.get('system_a_id'), data.get('system_b_id')
+    try:
+        id_a, id_b = int(id_a_str), int(id_b_str)
+        if id_a == id_b: raise ValueError("System IDs must be different")
+    except (ValueError, TypeError):
+         return jsonify({'error': 'Both system IDs are required and must be valid numbers'}), 400
     conn, cursor = get_db_connection()
     try:
         param = '%s' if bool(DATABASE_URL) else '?'; cursor.execute(f"INSERT INTO wormholes (system_a_id, system_b_id) VALUES ({param}, {param})", (min(id_a, id_b), max(id_a, id_b))); conn.commit()
-    except (sqlite3.IntegrityError, psycopg2.IntegrityError): return jsonify({'error': 'Wormhole already exists or invalid system ID'}), 400
+    except (sqlite3.IntegrityError, psycopg2.IntegrityError): 
+        conn.rollback() # Important to rollback before returning error
+        return jsonify({'error': 'Wormhole already exists or invalid system ID'}), 400
+    except Exception as e: # Catch other potential DB errors
+         conn.rollback()
+         return jsonify({'error': f'Database error: {e}'}), 500
     finally: conn.close()
     return jsonify({'message': 'Wormhole added successfully'})
 @app.route('/api/admin/delete_wormhole', methods=['POST'])
 @admin_required
 def delete_wormhole():
-    data = request.get_json(); id_a, id_b = data.get('system_a_id'), data.get('system_b_id')
-    if not id_a or not id_b: return jsonify({'error': 'Both system IDs are required'}), 400
+    data = request.get_json(); id_a_str, id_b_str = data.get('system_a_id'), data.get('system_b_id')
+    try:
+        id_a, id_b = int(id_a_str), int(id_b_str)
+    except (ValueError, TypeError):
+         return jsonify({'error': 'Both system IDs are required and must be valid numbers'}), 400
     conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?';
     cursor.execute(f"DELETE FROM wormholes WHERE system_a_id = {param} AND system_b_id = {param}", (min(id_a, id_b), max(id_a, id_b))); conn.commit(); conn.close()
     return jsonify({'message': 'Wormhole deleted successfully'})
+
+# --- NEW: Admin Region Effects Endpoints ---
+@app.route('/api/admin/region_effects')
+@admin_required
+def get_region_effects():
+    conn, cursor = get_db_connection();
+    cursor.execute('SELECT region_name, effect_name FROM region_effects ORDER BY region_name');
+    effects = cursor.fetchall(); conn.close()
+    return jsonify(effects)
+
+@app.route('/api/admin/add_region_effect', methods=['POST'])
+@admin_required
+def add_region_effect():
+    data = request.get_json()
+    region_name, effect_name = data.get('region_name'), data.get('effect_name')
+    if not region_name or not effect_name: 
+        return jsonify({'error': 'Region name and effect name are required'}), 400
+    
+    conn, cursor = get_db_connection()
+    pg_compat = bool(DATABASE_URL); param = '%s' if pg_compat else '?'
+    try:
+        if pg_compat:
+            cursor.execute(f"INSERT INTO region_effects (region_name, effect_name) VALUES ({param}, {param}) ON CONFLICT (region_name) DO UPDATE SET effect_name = EXCLUDED.effect_name", (region_name, effect_name))
+        else:
+            cursor.execute("INSERT OR REPLACE INTO region_effects (region_name, effect_name) VALUES (?, ?)", (region_name, effect_name))
+        conn.commit()
+        return jsonify({'message': 'Region effect saved successfully'})
+    except Exception as e:
+        conn.rollback(); return jsonify({'error': f'Database error: {e}'}), 500
+    finally: conn.close()
+
+@app.route('/api/admin/delete_region_effect', methods=['POST'])
+@admin_required
+def delete_region_effect():
+    data = request.get_json(); region_name = data.get('region_name')
+    if not region_name: return jsonify({'error': 'Region name is required'}), 400
+    conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?';
+    cursor.execute(f"DELETE FROM region_effects WHERE region_name = {param}", (region_name,))
+    conn.commit(); conn.close(); 
+    return jsonify({'message': 'Region effect deleted'})
+# --- END NEW ---
     
 @app.route('/api/systems')
 def get_systems_data():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
     conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
+    # Always fetch region_name now
     if session.get('is_developer'):
-        cursor.execute('SELECT s.id, s.name, s.x, s.y, s.position, s.catapult_radius, s.owner_faction_id FROM systems s')
+        cursor.execute('SELECT s.id, s.name, s.x, s.y, s.position, s.catapult_radius, s.owner_faction_id, s.region_name FROM systems s')
     else:
         faction_id = session['faction_id']
-        cursor.execute(f'SELECT s.id, s.name, s.x, s.y, s.position, s.catapult_radius, s.owner_faction_id FROM systems s JOIN faction_discovered_systems fds ON s.id = fds.system_id WHERE fds.faction_id = {param}', (faction_id,))
-    systems_list = cursor.fetchall(); systems_dict = {row['id']: dict(row) for row in systems_list}
+        cursor.execute(f'SELECT s.id, s.name, s.x, s.y, s.position, s.catapult_radius, s.owner_faction_id, s.region_name FROM systems s JOIN faction_discovered_systems fds ON s.id = fds.system_id WHERE fds.faction_id = {param}', (faction_id,))
+    
+    systems_list = cursor.fetchall()
+    # Convert position Decimal to string for JSON serialization
+    systems_dict = {}
+    for row in systems_list:
+        sys_data = dict(row)
+        if isinstance(sys_data.get('position'), decimal.Decimal):
+             sys_data['position'] = str(sys_data['position'])
+        systems_dict[sys_data['id']] = sys_data
+        
     cursor.execute('SELECT system_a_id, system_b_id FROM wormholes'); all_wormholes = cursor.fetchall()
     system_ids = set(systems_dict.keys())
     visible_wormholes = [(wh['system_a_id'], wh['system_b_id']) for wh in all_wormholes if wh['system_a_id'] in system_ids and wh['system_b_id'] in system_ids]
     conn.close()
     return jsonify({'systems': systems_dict, 'wormholes': visible_wormholes})
 
+# --- MODIFIED: /api/path with region avoidance ---
 @app.route('/api/path', methods=['POST'])
 def calculate_path():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
     data = request.get_json(); start_input, end_input = data.get('start_id'), data.get('end_id')
+    avoid_slow_regions = data.get('avoid_slow_regions', False)
+    slow_effect_name = "Null Space Decay" # Define the slow effect name
+    penalty_multiplier = 100 # Define the penalty multiplier
+    
     if not start_input or not end_input: return jsonify({'error': 'start_id and end_id are required'}), 400
     conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
     user_faction_id = session.get('faction_id')
@@ -672,72 +934,172 @@ def calculate_path():
         for rel in cursor.fetchall():
             other_fac = rel['faction_b_id'] if rel['faction_a_id'] == user_faction_id else rel['faction_a_id']
             relationships[other_fac] = rel['status']
+
+    # Fetch slow region names ONCE
+    slow_region_names = set()
+    if avoid_slow_regions:
+        cursor.execute(f"SELECT region_name FROM region_effects WHERE effect_name = {param}", (slow_effect_name,))
+        slow_region_names = {row['region_name'] for row in cursor.fetchall()}
+        print(f"Avoiding slow regions: {slow_region_names}") # Debugging
+
+    # Fetch systems including region_name
     if session.get('is_developer'):
-        cursor.execute('SELECT id, name, x, y, position, catapult_radius, owner_faction_id FROM systems')
+        cursor.execute('SELECT id, name, x, y, position, catapult_radius, owner_faction_id, region_name FROM systems')
     else:
-        cursor.execute(f'SELECT s.id, s.name, s.x, s.y, s.position, s.catapult_radius, s.owner_faction_id FROM systems s JOIN faction_discovered_systems fds ON s.id = fds.system_id WHERE fds.faction_id = {param}', (user_faction_id,))
+        cursor.execute(f'SELECT s.id, s.name, s.x, s.y, s.position, s.catapult_radius, s.owner_faction_id, s.region_name FROM systems s JOIN faction_discovered_systems fds ON s.id = fds.system_id WHERE fds.faction_id = {param}', (user_faction_id,))
     all_systems_raw = cursor.fetchall(); cursor.execute('SELECT system_a_id, system_b_id FROM wormholes'); all_wormholes = cursor.fetchall(); conn.close()
+    
     if not all_systems_raw: return jsonify({'path': [], 'distance': None})
-    systems_map = {str(r['id']): {'name': r['name'], 'x': r['x'], 'y': r['y'], 'position': r['position'], 'radius': r['catapult_radius'], 'owner': r['owner_faction_id']} for r in all_systems_raw}
+    
+    # Build systems_map including region_name and converting position to Decimal
+    systems_map = {}
+    for r in all_systems_raw:
+         try:
+             pos = decimal.Decimal(r['position']) if r['position'] is not None else None
+             systems_map[str(r['id'])] = {
+                 'name': r['name'], 'x': r['x'], 'y': r['y'], 
+                 'position': pos, # Store as Decimal
+                 'radius': r['catapult_radius'], 'owner': r['owner_faction_id'], 
+                 'region_name': r.get('region_name')
+             }
+         except (decimal.InvalidOperation, TypeError) as e:
+              print(f"Warning: Skipping system {r['id']} due to invalid position '{r['position']}'. Error: {e}", file=sys.stderr)
+
+    
     start_id, end_id = None, None
-    if start_input.startswith('pos:'):
-        start_id = 'virtual_start'; pos = float(start_input[4:]); x, y = get_spiral_coords(pos)
-        systems_map[start_id] = {'name': f'Coordinate #{pos}', 'x': x, 'y': y, 'position': pos, 'radius': 0, 'owner': None}
-    else: start_id = start_input.split(':')[1]
-    if end_input.startswith('pos:'):
-        end_id = 'virtual_end'; pos = float(end_input[4:]); x, y = get_spiral_coords(pos)
-        systems_map[end_id] = {'name': f'Coordinate #{pos}', 'x': x, 'y': y, 'position': pos, 'radius': 0, 'owner': None}
-    else: end_id = end_input.split(':')[1]
-    if start_id not in systems_map or end_id not in systems_map: return jsonify({'error': 'Start or end system not found in your map.'}), 404
+    try:
+        if start_input.startswith('pos:'):
+            start_id = 'virtual_start'; pos = decimal.Decimal(start_input[4:]); x, y = get_spiral_coords(pos)
+            systems_map[start_id] = {'name': f'Coordinate #{pos}', 'x': x, 'y': y, 'position': pos, 'radius': 0, 'owner': None, 'region_name': None}
+        else: start_id = start_input.split(':')[1]
+        
+        if end_input.startswith('pos:'):
+            end_id = 'virtual_end'; pos = decimal.Decimal(end_input[4:]); x, y = get_spiral_coords(pos)
+            systems_map[end_id] = {'name': f'Coordinate #{pos}', 'x': x, 'y': y, 'position': pos, 'radius': 0, 'owner': None, 'region_name': None}
+        else: end_id = end_input.split(':')[1]
+    except (decimal.InvalidOperation, IndexError, ValueError) as e:
+         return jsonify({'error': f'Invalid start or end input format: {e}'}), 400
+
+    if start_id not in systems_map or end_id not in systems_map: return jsonify({'error': 'Start or end system/coordinate not found in your map.'}), 404
+    
     wormhole_pairs = {tuple(sorted((str(wh['system_a_id']), str(wh['system_b_id'])))) for wh in all_wormholes}
     distances = {sys_id: float('inf') for sys_id in systems_map}; predecessors = {sys_id: (None, None) for sys_id in systems_map}
     distances[start_id] = 0; pq = [(0, start_id)]
+    
     while pq:
         current_distance, current_id = heapq.heappop(pq)
         if current_distance > distances[current_id]: continue
         if current_id == end_id: break
+
+        current_sys = systems_map[current_id]
+        if current_sys['position'] is None: continue # Skip nodes without position
+
         for neighbor_id in systems_map:
             if neighbor_id == current_id: continue
-            cost, method = float('inf'), None; current_sys = systems_map[current_id]; neighbor_sys = systems_map[neighbor_id]
-            sublight_dist = abs(current_sys['position'] - neighbor_sys['position']); cost, method = sublight_dist, 'sublight'
+            
+            neighbor_sys = systems_map[neighbor_id]
+            if neighbor_sys['position'] is None: continue # Skip neighbors without position
+
+            cost, method = float('inf'), None
+            
+            # Use Decimal for distance calculation
+            sublight_dist = float(abs(current_sys['position'] - neighbor_sys['position']))
+            cost = sublight_dist
+            method = 'sublight'
+            
+            # Apply slow region penalty if applicable
+            if avoid_slow_regions:
+                is_slow_travel = (current_sys.get('region_name') in slow_region_names) or \
+                                 (neighbor_sys.get('region_name') in slow_region_names)
+                if is_slow_travel:
+                    cost = sublight_dist * penalty_multiplier # Apply penalty
+                    # print(f"Applying penalty: {current_id} ({current_sys.get('region_name')}) -> {neighbor_id} ({neighbor_sys.get('region_name')}) | Dist: {sublight_dist:.2f} -> Cost: {cost:.2f}") # Debug
+
             id_pair = tuple(sorted((current_id, neighbor_id)))
             
-            if current_sys.get('radius', 0) > 0 and abs(current_sys['position'] - neighbor_sys['position']) <= current_sys['radius']:
+            # Check Catapult (cost 0, overrides sublight if cheaper)
+            # Use float comparison for radius check
+            if current_sys.get('radius', 0) > 0 and sublight_dist <= current_sys['radius']:
                 owner = current_sys.get('owner')
                 is_allowed = (owner is None) or (owner == user_faction_id) or (relationships.get(owner) == 'allied')
-                if is_allowed: cost, method = 0, 'catapult'
-            
+                if is_allowed: 
+                     # Only take catapult if it's cheaper than potentially penalized sublight
+                     if 0 < cost:
+                         cost, method = 0, 'catapult'
+
+            # Check Wormhole (cost 0, overrides sublight/catapult if cheaper)
             if id_pair in wormhole_pairs:
                 owner_a = current_sys.get('owner'); owner_b = neighbor_sys.get('owner')
-                is_at_war = (relationships.get(owner_a) == 'war') or (relationships.get(owner_b) == 'war')
+                # Allow if either system has no owner or owner is not at war
+                is_at_war = (owner_a is not None and relationships.get(owner_a) == 'war') or \
+                            (owner_b is not None and relationships.get(owner_b) == 'war')
                 if not is_at_war:
-                    if 0 < cost: cost, method = 0, 'wormhole'
+                    # Only take wormhole if it's cheaper
+                    if 0 < cost: 
+                        cost, method = 0, 'wormhole'
 
-            if distances[current_id] + cost < distances[neighbor_id]:
-                distances[neighbor_id] = distances[current_id] + cost; predecessors[neighbor_id] = (current_id, method); heapq.heappush(pq, (distances[neighbor_id], neighbor_id))
-    full_path_ids, current_node, total_distance = [], end_id, distances.get(end_id)
-    if total_distance is None or total_distance == float('inf'): return jsonify({'path': [], 'distance': None})
-    while current_node is not None: full_path_ids.append(current_node); current_node, _ = predecessors.get(current_node, (None, None))
+            # Update path if this route is shorter
+            new_distance = distances[current_id] + cost
+            if new_distance < distances[neighbor_id]:
+                distances[neighbor_id] = new_distance
+                predecessors[neighbor_id] = (current_id, method); 
+                heapq.heappush(pq, (new_distance, neighbor_id))
+    
+    # Reconstruct path
+    full_path_ids = []
+    current_node = end_id
+    total_distance = distances.get(end_id)
+
+    if total_distance is None or total_distance == float('inf'): 
+        return jsonify({'path': [], 'detailed_path': [], 'distance': None})
+
+    while current_node is not None: 
+        full_path_ids.append(current_node); 
+        predecessor_info = predecessors.get(current_node)
+        if predecessor_info:
+             current_node, _ = predecessor_info
+        else: # Should only happen for the start node
+             current_node = None
+             
     full_path_ids.reverse()
-    if not full_path_ids or full_path_ids[0] != start_id: return jsonify({'path': [], 'distance': None})
+    
+    if not full_path_ids or full_path_ids[0] != start_id: 
+        print("Path reconstruction failed or start node mismatch.", file=sys.stderr) # Debugging
+        return jsonify({'path': [], 'detailed_path': [], 'distance': None})
+    
     path_for_json = []
     for sys_id in full_path_ids:
         node_data = systems_map[sys_id]
-        path_for_json.append({'id': sys_id, 'name': node_data['name'], 'x': node_data['x'], 'y': node_data['y'], 'position': node_data['position']})
-    if len(full_path_ids) <= 1: return jsonify({'path': path_for_json, 'detailed_path': [], 'distance': total_distance})
+        path_for_json.append({
+            'id': sys_id, 
+            'name': node_data['name'], 
+            'x': node_data['x'], 
+            'y': node_data['y'], 
+            # Send position as string for consistency
+            'position': str(node_data['position']) if node_data['position'] is not None else None 
+        })
+        
+    if len(full_path_ids) <= 1: 
+        return jsonify({'path': path_for_json, 'detailed_path': [], 'distance': round(total_distance, 2)})
 
     detailed_path = []
     for i in range(len(full_path_ids) - 1):
-        from_node = full_path_ids[i]
-        to_node = full_path_ids[i+1]
-        _, method = predecessors[to_node]
-        detailed_path.append({'from_id': from_node, 'to_id': to_node, 'method': method})
+        from_node_id = full_path_ids[i]
+        to_node_id = full_path_ids[i+1]
+        # Get the method used TO reach the 'to_node_id'
+        _, method = predecessors.get(to_node_id, (None, 'unknown')) 
+        detailed_path.append({'from_id': from_node_id, 'to_id': to_node_id, 'method': method or 'unknown'})
     
-    return jsonify({'path': path_for_json, 'detailed_path': detailed_path, 'distance': total_distance})
+    return jsonify({'path': path_for_json, 'detailed_path': detailed_path, 'distance': round(total_distance, 2)})
+# --- END MODIFIED ---
 
-
-# This call ensures the database is set up when the app starts.
-setup_database_if_needed()
+# Initial setup call
+try:
+    setup_database_if_needed()
+except Exception as setup_err:
+     print(f"CRITICAL ERROR during database setup: {setup_err}. Application might not work correctly.", file=sys.stderr)
+     # Depending on severity, you might want sys.exit(1) here
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    # Consider removing debug=True for production on Render
+    app.run(debug=os.environ.get('FLASK_DEBUG', 'False').lower() == 'true', port=int(os.environ.get('PORT', 5000)), host='0.0.0.0')

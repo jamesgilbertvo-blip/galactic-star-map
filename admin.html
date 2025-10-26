@@ -8,6 +8,9 @@
     <style>
         body { background-color: #111827; color: #d1d5db; font-family: 'Inter', sans-serif; }
         select { background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%239ca3af' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e"); background-position: right 0.5rem center; background-repeat: no-repeat; background-size: 1.5em 1.5em; -webkit-appearance: none; -moz-appearance: none; appearance: none; padding-right: 2.5rem;}
+        /* Style for disabled save buttons */
+        .save-btn:disabled { color: #6b7280; cursor: not-allowed; }
+        .save-btn:disabled:hover { color: #6b7280; }
     </style>
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
 </head>
@@ -18,16 +21,42 @@
             <a href="/" class="text-indigo-400 hover:text-indigo-300">&larr; Back to Main Map</a>
         </header>
 
-        <div class="max-w-md mx-auto mb-8">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
             <div class="bg-gray-900 rounded-lg shadow p-6">
                 <h2 class="text-2xl font-bold text-white mb-4">Promote Developer</h2>
                 <form id="promote-dev-form" class="space-y-3">
-                        <input type="text" id="dev-username-input" placeholder="Username to promote" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white">
+                        <input type="text" id="dev-username-input" placeholder="Username to promote" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500">
                     <button type="submit" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-md">Promote to Developer</button>
                 </form>
                 <p id="dev-status" class="text-sm text-center text-green-400 mt-4 h-4"></p>
             </div>
-        </div>
+            
+            <div class="bg-gray-900 rounded-lg shadow p-6">
+                <h2 class="text-2xl font-bold text-white mb-4">Manage Region Effects</h2>
+                <form id="add-region-effect-form" class="mb-6 bg-gray-800 p-4 rounded-lg space-y-3">
+                    <h3 class="font-semibold text-white">Add/Update Region Effect</h3>
+                    <div class="flex items-center space-x-2">
+                        <input type="text" id="region-name-input" placeholder="Region Name" required class="w-full bg-gray-700 border border-gray-600 rounded-md py-1 px-2 text-white focus:outline-none focus:ring-indigo-500">
+                        <input type="text" id="effect-name-input" placeholder="Effect Name (e.g. Null Space Decay)" required class="w-full bg-gray-700 border border-gray-600 rounded-md py-1 px-2 text-white focus:outline-none focus:ring-indigo-500">
+                    </div>
+                    <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md text-sm">Save Effect</button>
+                </form>
+                <div class="overflow-y-auto h-48 border border-gray-700 rounded-md">
+                    <table class="min-w-full divide-y divide-gray-700">
+                         <thead class="bg-gray-800 sticky top-0 z-10">
+                             <tr>
+                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Region Name</th>
+                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Effect Name</th>
+                                 <th class="relative px-6 py-3"><span class="sr-only">Delete</span></th>
+                             </tr>
+                         </thead>
+                        <tbody id="region-effects-table-body" class="bg-gray-800 divide-y divide-gray-700">
+                            </tbody>
+                    </table>
+                </div>
+                 <p id="region-effect-status" class="text-sm text-center text-green-400 mt-4 h-4"></p>
+            </div>
+            </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
             <div class="bg-gray-900 rounded-lg shadow p-6">
@@ -35,24 +64,24 @@
                 <form id="add-relationship-form" class="mb-6 bg-gray-800 p-4 rounded-lg space-y-3">
                     <h3 class="font-semibold text-white">Set Relationship</h3>
                     <div class="grid grid-cols-2 gap-4">
-                        <select id="faction-a-select" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white"></select>
-                        <select id="faction-b-select" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white"></select>
+                        <select id="faction-a-select" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500"></select>
+                        <select id="faction-b-select" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500"></select>
                     </div>
                     <div class="flex items-center space-x-2">
-                        <select id="status-select" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white">
+                        <select id="status-select" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500">
                             <option value="allied">Allied</option>
                             <option value="war">War</option>
                         </select>
                         <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md text-sm">Set Status</button>
                     </div>
                 </form>
-                <div class="overflow-y-auto h-64">
+                <div class="overflow-y-auto h-64 border border-gray-700 rounded-md">
                     <table class="min-w-full divide-y divide-gray-700">
-                        <thead class="bg-gray-800 sticky top-0">
+                        <thead class="bg-gray-800 sticky top-0 z-10">
                             <tr>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">Faction A</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">Faction B</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">Status</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Faction A</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Faction B</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Status</th>
                                 <th class="relative px-6 py-3"><span class="sr-only">Delete</span></th>
                             </tr>
                         </thead>
@@ -66,15 +95,21 @@
                 <form id="add-wormhole-form" class="mb-6 bg-gray-800 p-4 rounded-lg space-y-3">
                     <h3 class="font-semibold text-white">Add New Wormhole</h3>
                     <div class="flex items-center space-x-2">
-                        <input type="number" id="wormhole-id-a" placeholder="System A ID" class="w-full bg-gray-700 border border-gray-600 rounded-md py-1 px-2 text-white">
+                        <input type="number" id="wormhole-id-a" placeholder="System A ID" required class="w-full bg-gray-700 border border-gray-600 rounded-md py-1 px-2 text-white focus:outline-none focus:ring-indigo-500">
                         <span class="text-gray-400">&harr;</span>
-                        <input type="number" id="wormhole-id-b" placeholder="System B ID" class="w-full bg-gray-700 border border-gray-600 rounded-md py-1 px-2 text-white">
+                        <input type="number" id="wormhole-id-b" placeholder="System B ID" required class="w-full bg-gray-700 border border-gray-600 rounded-md py-1 px-2 text-white focus:outline-none focus:ring-indigo-500">
                     </div>
                     <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md text-sm">Add Wormhole</button>
                 </form>
-                <div class="overflow-y-auto h-80">
+                <div class="overflow-y-auto h-80 border border-gray-700 rounded-md">
                     <table class="min-w-full divide-y divide-gray-700">
-                         <thead class="bg-gray-800 sticky top-0"><tr><th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">System A</th><th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase">System B</th><th class="relative px-6 py-3"><span class="sr-only">Delete</span></th></tr></thead>
+                         <thead class="bg-gray-800 sticky top-0 z-10">
+                             <tr>
+                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">System A</th>
+                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">System B</th>
+                                 <th class="relative px-6 py-3"><span class="sr-only">Delete</span></th>
+                             </tr>
+                         </thead>
                         <tbody id="wormholes-table-body" class="bg-gray-800 divide-y divide-gray-700"></tbody>
                     </table>
                 </div>
@@ -83,14 +118,14 @@
         </div>
         <div class="bg-gray-900 rounded-lg shadow p-6">
             <h2 class="text-2xl font-bold text-white mb-4">Manage Systems (Catapults & Ownership)</h2>
-            <div class="mb-4"><input type="text" id="search-input" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white" placeholder="Search by System Name or ID..."></div>
-            <div class="overflow-y-auto h-96">
+            <div class="mb-4"><input type="text" id="search-input" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="Search by System Name or Position (#)..."></div>
+            <div class="overflow-y-auto h-96 border border-gray-700 rounded-md">
                 <table class="min-w-full divide-y divide-gray-700">
-                    <thead class="bg-gray-800 sticky top-0">
+                    <thead class="bg-gray-800 sticky top-0 z-10">
                         <tr>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase">System</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase">Catapult Radius</th>
-                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase">Owner Faction</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">System</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Catapult Radius</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Owner Faction</th>
                             <th class="relative px-4 py-3"><span class="sr-only">Save</span></th>
                         </tr>
                     </thead>
@@ -108,7 +143,14 @@
             wormholesTableBody: document.getElementById('wormholes-table-body'), addWormholeForm: document.getElementById('add-wormhole-form'), wormholeStatus: document.getElementById('wormhole-status'),
             relationshipsTableBody: document.getElementById('relationships-table-body'), addRelationshipForm: document.getElementById('add-relationship-form'), relationshipStatus: document.getElementById('relationship-status'),
             factionASelect: document.getElementById('faction-a-select'), factionBSelect: document.getElementById('faction-b-select'),
-            promoteDevForm: document.getElementById('promote-dev-form'), devStatus: document.getElementById('dev-status')
+            promoteDevForm: document.getElementById('promote-dev-form'), devStatus: document.getElementById('dev-status'),
+            // --- NEW: Region Effects DOM ---
+            regionEffectsTableBody: document.getElementById('region-effects-table-body'),
+            addRegionEffectForm: document.getElementById('add-region-effect-form'),
+            regionEffectStatus: document.getElementById('region-effect-status'),
+            regionNameInput: document.getElementById('region-name-input'),
+            effectNameInput: document.getElementById('effect-name-input')
+            // --- END NEW ---
         };
         let allSystems = []; let allFactions = [];
 
@@ -120,21 +162,33 @@
                 const row = document.createElement('tr');
                 row.dataset.systemId = system.id;
                 
-                // --- FIX IS HERE ---
-                // Check if the name is a default "System xxxx" name
-                const displayName = system.name.startsWith("System ") ? `#${system.position}` : system.name;
-                const nameColor = system.name.startsWith("System ") ? "text-gray-400" : "text-white";
+                // Use position if name is default "System xxxx"
+                const displayName = system.name && !system.name.startsWith("System ") ? system.name : `#${system.position}`;
+                const nameColor = system.name && !system.name.startsWith("System ") ? "text-white" : "text-gray-400";
                 
-                const ownerSelect = `<select class="w-full bg-gray-700 rounded-md py-1 px-2 text-white owner-select"><option value="0">None</option>${allFactions.map(f => `<option value="${f.id}" ${system.owner_faction_id === f.id ? 'selected' : ''}>${f.name}</option>`).join('')}</select>`;
+                const ownerSelect = `<select class="w-full bg-gray-700 border border-gray-600 rounded-md py-1 px-2 text-white owner-select focus:outline-none focus:ring-indigo-500"><option value="0">None</option>${allFactions.map(f => `<option value="${f.id}" ${system.owner_faction_id === f.id ? 'selected' : ''}>${f.name}</option>`).join('')}</select>`;
                 
                 row.innerHTML = `
-                    <td class="px-4 py-4 text-sm">
+                    <td class="px-4 py-4 text-sm whitespace-nowrap">
                         <div class="font-medium ${nameColor}">${displayName}</div>
-                        <div class="text-gray-400">${system.id}</div>
+                        <div class="text-gray-400 text-xs">ID: ${system.id}</div>
                     </td>
-                    <td class="px-4 py-4"><input type="number" value="${system.catapult_radius}" class="w-24 bg-gray-700 rounded-md py-1 px-2 text-white radius-input"></td>
+                    <td class="px-4 py-4">
+                        <input type="number" step="any" value="${system.catapult_radius || 0}" class="w-24 bg-gray-700 border border-gray-600 rounded-md py-1 px-2 text-white radius-input focus:outline-none focus:ring-indigo-500">
+                    </td>
                     <td class="px-4 py-4">${ownerSelect}</td>
-                    <td class="px-4 py-4 text-right"><button class="text-indigo-400 hover:text-indigo-300 save-btn">Save</button></td>`;
+                    <td class="px-4 py-4 text-right">
+                        <button class="text-indigo-400 hover:text-indigo-300 save-btn" disabled>Save</button>
+                    </td>`;
+
+                // Add event listeners to enable save button on change
+                const radiusInput = row.querySelector('.radius-input');
+                const ownerSelectEl = row.querySelector('.owner-select');
+                const saveBtn = row.querySelector('.save-btn');
+
+                const enableSave = () => { saveBtn.disabled = false; };
+                radiusInput.addEventListener('input', enableSave);
+                ownerSelectEl.addEventListener('change', enableSave);
                 
                 dom.systemsTableBody.appendChild(row);
             });
@@ -142,9 +196,14 @@
         
         const renderWormholesTable = (wormholes) => {
             dom.wormholesTableBody.innerHTML = '';
+            // Sort wormholes alphabetically by first system name
+            wormholes.sort((a, b) => a.name_a.localeCompare(b.name_a));
             wormholes.forEach(wh => {
                 const row = document.createElement('tr'); row.dataset.idA = wh.system_a_id; row.dataset.idB = wh.system_b_id;
-                row.innerHTML = `<td class="px-6 py-4 text-sm text-gray-300">${wh.name_a} (${wh.system_a_id})</td><td class="px-6 py-4 text-sm text-gray-300">${wh.name_b} (${wh.system_b_id})</td><td class="px-6 py-4 text-right"><button class="text-red-400 hover:text-red-300 delete-btn">&times;</button></td>`;
+                row.innerHTML = `
+                    <td class="px-6 py-4 text-sm text-gray-300 whitespace-nowrap">${wh.name_a} (${wh.system_a_id})</td>
+                    <td class="px-6 py-4 text-sm text-gray-300 whitespace-nowrap">${wh.name_b} (${wh.system_b_id})</td>
+                    <td class="px-6 py-4 text-right"><button class="text-red-400 hover:text-red-300 delete-wormhole-btn" title="Delete wormhole">&times;</button></td>`;
                 dom.wormholesTableBody.appendChild(row);
             });
         };
@@ -155,41 +214,89 @@
                 const row = document.createElement('tr');
                 row.dataset.idA = rel.faction_a_id; row.dataset.idB = rel.faction_b_id;
                 const statusColor = rel.status === 'allied' ? 'text-green-400' : 'text-red-400';
-                row.innerHTML = `<td class="px-6 py-4 text-sm text-gray-300">${rel.name_a}</td><td class="px-6 py-4 text-sm text-gray-300">${rel.name_b}</td><td class="px-6 py-4 text-sm font-semibold ${statusColor}">${rel.status.toUpperCase()}</td><td class="px-6 py-4 text-right"><button class="text-red-400 hover:text-red-300 delete-rel-btn">&times;</button></td>`;
+                row.innerHTML = `
+                    <td class="px-6 py-4 text-sm text-gray-300 whitespace-nowrap">${rel.name_a}</td>
+                    <td class="px-6 py-4 text-sm text-gray-300 whitespace-nowrap">${rel.name_b}</td>
+                    <td class="px-6 py-4 text-sm font-semibold ${statusColor}">${rel.status.toUpperCase()}</td>
+                    <td class="px-6 py-4 text-right"><button class="text-red-400 hover:text-red-300 delete-rel-btn" title="Delete relationship">&times;</button></td>`;
                 dom.relationshipsTableBody.appendChild(row);
             });
         };
+
+        // --- NEW: Render Region Effects ---
+        const renderRegionEffectsTable = (effects) => {
+            dom.regionEffectsTableBody.innerHTML = '';
+            effects.forEach(effect => {
+                const row = document.createElement('tr');
+                row.dataset.regionName = effect.region_name;
+                row.innerHTML = `
+                    <td class="px-6 py-4 text-sm text-gray-300 whitespace-nowrap">${effect.region_name}</td>
+                    <td class="px-6 py-4 text-sm text-gray-300 whitespace-nowrap">${effect.effect_name}</td>
+                    <td class="px-6 py-4 text-right"><button class="text-red-400 hover:text-red-300 delete-region-btn" title="Delete region effect">&times;</button></td>`;
+                dom.regionEffectsTableBody.appendChild(row);
+            });
+        };
+        // --- END NEW ---
         
         const handleSaveSystem = async (e) => {
             if (!e.target.classList.contains('save-btn')) return;
-            const row = e.target.closest('tr');
+            const btn = e.target;
+            const row = btn.closest('tr');
             const systemId = row.dataset.systemId;
-            const newRadius = parseFloat(row.querySelector('.radius-input').value);
+            const newRadius = row.querySelector('.radius-input').value; // Keep as string, validate in backend
             const ownerId = row.querySelector('.owner-select').value;
+            
             dom.systemStatus.textContent = `Saving System ${systemId}...`;
-            
-            const radiusPromise = apiFetch('/api/admin/update_system', {method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ system_id: systemId, catapult_radius: newRadius })});
-            const ownerPromise = apiFetch('/api/admin/update_system_owner', {method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ system_id: systemId, owner_faction_id: ownerId })});
-            
-            await Promise.all([radiusPromise, ownerPromise]);
-            dom.systemStatus.textContent = `System ${systemId} saved successfully.`;
-            setTimeout(() => { dom.systemStatus.textContent = '' }, 3000);
+            btn.disabled = true; // Disable button while saving
+            btn.textContent = 'Saving...';
+
+            try {
+                // Send both updates concurrently
+                const [radiusRes, ownerRes] = await Promise.all([
+                    apiFetch('/api/admin/update_system', {method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ system_id: systemId, catapult_radius: newRadius })}),
+                    apiFetch('/api/admin/update_system_owner', {method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ system_id: systemId, owner_faction_id: ownerId })})
+                ]);
+
+                const radiusData = await radiusRes.json();
+                const ownerData = await ownerRes.json();
+
+                if (!radiusRes.ok || !ownerRes.ok) {
+                    throw new Error(`Radius update: ${radiusData.error || 'Failed.'} Owner update: ${ownerData.error || 'Failed.'}`);
+                }
+                
+                dom.systemStatus.textContent = `System ${systemId} saved successfully.`;
+                // Keep button disabled after successful save until next change
+                 btn.textContent = 'Save'; 
+
+            } catch (error) {
+                console.error("Error saving system:", error);
+                dom.systemStatus.textContent = `Error saving System ${systemId}: ${error.message}`;
+                btn.disabled = false; // Re-enable on error
+                btn.textContent = 'Save';
+            } finally {
+                setTimeout(() => { dom.systemStatus.textContent = '' }, 5000); 
+            }
         };
 
-        const handleAddWormhole = async (e) => { e.preventDefault(); const idA = parseInt(document.getElementById('wormhole-id-a').value, 10); const idB = parseInt(document.getElementById('wormhole-id-b').value, 10); if (!idA || !idB || idA === idB) { dom.wormholeStatus.textContent = 'Invalid system IDs.'; return; } dom.wormholeStatus.textContent = 'Adding...'; const r = await apiFetch('/api/admin/add_wormhole', {method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ system_a_id: idA, system_b_id: idB })}); const d = await r.json(); dom.wormholeStatus.textContent = d.message || d.error; if(r.ok) loadAdminData(); dom.addWormholeForm.reset(); setTimeout(() => { dom.wormholeStatus.textContent = '' }, 3000); };
-        const handleDeleteWormhole = async (e) => { if (!e.target.classList.contains('delete-btn')) return; if (!confirm('Are you sure?')) return; const row = e.target.closest('tr'); const { idA, idB } = row.dataset; dom.wormholeStatus.textContent = 'Deleting...'; const r = await apiFetch('/api/admin/delete_wormhole', {method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ system_a_id: idA, system_b_id: idB })}); const d = await r.json(); dom.wormholeStatus.textContent = d.message; if (r.ok) row.remove(); setTimeout(() => { dom.wormholeStatus.textContent = '' }, 3000); };
+        const handleAddWormhole = async (e) => { e.preventDefault(); const idA = document.getElementById('wormhole-id-a').value; const idB = document.getElementById('wormhole-id-b').value; if (!idA || !idB || idA === idB) { dom.wormholeStatus.textContent = 'Invalid system IDs.'; return; } dom.wormholeStatus.textContent = 'Adding...'; try { const r = await apiFetch('/api/admin/add_wormhole', {method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ system_a_id: idA, system_b_id: idB })}); const d = await r.json(); dom.wormholeStatus.textContent = d.message || d.error; if(r.ok) { dom.addWormholeForm.reset(); loadAdminData(); } } catch(err){ dom.wormholeStatus.textContent = 'Error contacting server.'; } finally { setTimeout(() => { dom.wormholeStatus.textContent = '' }, 3000); } };
+        const handleDeleteWormhole = async (e) => { if (!e.target.classList.contains('delete-wormhole-btn')) return; if (!confirm('Are you sure?')) return; const row = e.target.closest('tr'); const { idA, idB } = row.dataset; dom.wormholeStatus.textContent = 'Deleting...'; try { const r = await apiFetch('/api/admin/delete_wormhole', {method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ system_a_id: idA, system_b_id: idB })}); const d = await r.json(); dom.wormholeStatus.textContent = d.message; if (r.ok) row.remove(); } catch(err){ dom.wormholeStatus.textContent = 'Error contacting server.'; } finally { setTimeout(() => { dom.wormholeStatus.textContent = '' }, 3000); } };
         
         const handleAddRelationship = async (e) => {
             e.preventDefault();
-            const idA = parseInt(dom.factionASelect.value, 10);
-            const idB = parseInt(dom.factionBSelect.value, 10);
+            const idA = dom.factionASelect.value;
+            const idB = dom.factionBSelect.value;
             const status = document.getElementById('status-select').value;
             if (!idA || !idB || idA === idB) { dom.relationshipStatus.textContent = 'Please select two different factions.'; return; }
             dom.relationshipStatus.textContent = 'Setting relationship...';
-            const r = await apiFetch('/api/admin/add_relationship', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ faction_a_id: idA, faction_b_id: idB, status: status }) });
-            const d = await r.json(); dom.relationshipStatus.textContent = d.message || d.error;
-            if (r.ok) { loadAdminData(); }
-            setTimeout(() => { dom.relationshipStatus.textContent = '' }, 3000);
+            try {
+                const r = await apiFetch('/api/admin/add_relationship', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ faction_a_id: idA, faction_b_id: idB, status: status }) });
+                const d = await r.json(); dom.relationshipStatus.textContent = d.message || d.error;
+                if (r.ok) { loadAdminData(); }
+            } catch(err) {
+                 dom.relationshipStatus.textContent = 'Error contacting server.';
+            } finally {
+                setTimeout(() => { dom.relationshipStatus.textContent = '' }, 3000);
+            }
         };
 
         const handleDeleteRelationship = async (e) => {
@@ -197,11 +304,69 @@
             if (!confirm('Are you sure you want to delete this relationship?')) return;
             const row = e.target.closest('tr'); const { idA, idB } = row.dataset;
             dom.relationshipStatus.textContent = 'Deleting...';
-            const r = await apiFetch('/api/admin/delete_relationship', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ faction_a_id: idA, system_b_id: idB }) });
-            const d = await r.json(); dom.relationshipStatus.textContent = d.message;
-            if (r.ok) row.remove();
-            setTimeout(() => { dom.relationshipStatus.textContent = '' }, 3000);
+            try {
+                const r = await apiFetch('/api/admin/delete_relationship', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ faction_a_id: idA, faction_b_id: idB }) }); // Corrected key to faction_b_id
+                const d = await r.json(); dom.relationshipStatus.textContent = d.message;
+                if (r.ok) row.remove();
+             } catch(err) {
+                 dom.relationshipStatus.textContent = 'Error contacting server.';
+            } finally {
+                setTimeout(() => { dom.relationshipStatus.textContent = '' }, 3000);
+            }
         };
+
+        // --- NEW: Region Effect Handlers ---
+        const handleAddRegionEffect = async (e) => {
+            e.preventDefault();
+            const regionName = dom.regionNameInput.value.trim();
+            const effectName = dom.effectNameInput.value.trim();
+            if (!regionName || !effectName) {
+                dom.regionEffectStatus.textContent = 'Region name and effect name are required.';
+                return;
+            }
+            dom.regionEffectStatus.textContent = 'Saving...';
+            try {
+                const r = await apiFetch('/api/admin/add_region_effect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ region_name: regionName, effect_name: effectName })
+                });
+                const d = await r.json();
+                dom.regionEffectStatus.textContent = d.message || d.error;
+                if (r.ok) {
+                    dom.addRegionEffectForm.reset();
+                    loadAdminData(); // Reload data to show the new/updated effect
+                }
+            } catch(err) {
+                dom.regionEffectStatus.textContent = 'Error contacting server.';
+            } finally {
+                setTimeout(() => { dom.regionEffectStatus.textContent = '' }, 3000);
+            }
+        };
+
+        const handleDeleteRegionEffect = async (e) => {
+            if (!e.target.classList.contains('delete-region-btn')) return;
+            const row = e.target.closest('tr');
+            const regionName = row.dataset.regionName;
+            if (!confirm(`Are you sure you want to delete the effect for "${regionName}"?`)) return;
+            
+            dom.regionEffectStatus.textContent = 'Deleting...';
+            try {
+                const r = await apiFetch('/api/admin/delete_region_effect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ region_name: regionName })
+                });
+                const d = await r.json();
+                dom.regionEffectStatus.textContent = d.message;
+                if (r.ok) row.remove();
+             } catch(err) {
+                dom.regionEffectStatus.textContent = 'Error contacting server.';
+            } finally {
+                setTimeout(() => { dom.regionEffectStatus.textContent = '' }, 3000);
+            }
+        };
+        // --- END NEW ---
 
         const handlePromoteDeveloper = async (e) => {
             e.preventDefault();
@@ -213,25 +378,53 @@
                 const d = await r.json(); dom.devStatus.textContent = d.message || d.error;
                 if(r.ok) dom.promoteDevForm.reset();
             } catch(err) {
-                 dom.devStatus.textContent = 'Error: Endpoint not found.';
+                 dom.devStatus.textContent = 'Error: Endpoint not found or server error.'; // More informative error
+                 console.error("Promotion Error:", err);
+            } finally {
+                setTimeout(() => { dom.devStatus.textContent = '' }, 3000);
             }
-            setTimeout(() => { dom.devStatus.textContent = '' }, 3000);
         };
 
-        const handleSearch = (e) => { const query = e.target.value.toLowerCase(); const filtered = allSystems.filter(s => String(s.id).includes(query) || s.name.toLowerCase().includes(query) || (s.name.startsWith("System ") && `#${s.position}`.includes(query)) ); renderSystemsTable(filtered); };
+        const handleSearch = (e) => { 
+            const query = e.target.value.toLowerCase().trim(); 
+            const filtered = allSystems.filter(s => 
+                 String(s.id).includes(query) || 
+                 (s.name && s.name.toLowerCase().includes(query)) || 
+                 (s.position && `#${s.position}`.startsWith(query)) // Allow searching by #pos
+            ); 
+            renderSystemsTable(filtered); 
+        };
         
         const loadAdminData = async () => {
+            console.log("Loading admin data...");
             try {
-                const [systemsRes, wormholesRes, factionsRes, relsRes] = await Promise.all([
-                    apiFetch('/api/admin/systems'), apiFetch('/api/admin/wormholes'), apiFetch('/api/admin/factions'), apiFetch('/api/admin/relationships')
+                const [systemsRes, wormholesRes, factionsRes, relsRes, regionEffectsRes] = await Promise.all([
+                    apiFetch('/api/admin/systems'), 
+                    apiFetch('/api/admin/wormholes'), 
+                    apiFetch('/api/admin/factions'), 
+                    apiFetch('/api/admin/relationships'),
+                    apiFetch('/api/admin/region_effects') // NEW
                 ]);
-                if (systemsRes.status === 403) { document.body.innerHTML = '<div class="text-center p-8 text-red-400">Admin access required. <a href="/" class="text-indigo-400">Go back</a></div>'; return; }
                 
+                // Check for 403 Forbidden specifically
+                if ([systemsRes, wormholesRes, factionsRes, relsRes, regionEffectsRes].some(res => res.status === 403)) {
+                     document.body.innerHTML = '<div class="text-center p-8 text-red-400">Admin access required. <a href="/" class="text-indigo-400">Go back</a></div>'; 
+                     return; 
+                }
+                
+                // Check if all responses are OK
+                if (!systemsRes.ok || !wormholesRes.ok || !factionsRes.ok || !relsRes.ok || !regionEffectsRes.ok) {
+                     throw new Error(`Failed to load data: ${systemsRes.statusText}, ${wormholesRes.statusText}, ${factionsRes.statusText}, ${relsRes.statusText}, ${regionEffectsRes.statusText}`);
+                }
+
                 allSystems = await systemsRes.json();
                 allFactions = await factionsRes.json();
                 const allWormholes = await wormholesRes.json();
                 const allRelationships = await relsRes.json();
+                const allRegionEffects = await regionEffectsRes.json(); // NEW
                 
+                // Sort factions for dropdowns
+                allFactions.sort((a, b) => a.name.localeCompare(b.name));
                 const factionOptions = allFactions.map(f => `<option value="${f.id}">${f.name}</option>`).join('');
                 dom.factionASelect.innerHTML = factionOptions;
                 dom.factionBSelect.innerHTML = factionOptions;
@@ -239,16 +432,26 @@
                 renderSystemsTable(allSystems);
                 renderWormholesTable(allWormholes);
                 renderRelationshipsTable(allRelationships);
+                renderRegionEffectsTable(allRegionEffects); // NEW
+                console.log("Admin data loaded successfully.");
 
-            } catch (error) { console.error("Failed to load admin data:", error); }
+            } catch (error) { 
+                console.error("Failed to load admin data:", error); 
+                // Display error to the user
+                document.body.innerHTML = `<div class="text-center p-8 text-red-400">Error loading admin data: ${error.message}. Please check console and try again. <a href="/" class="text-indigo-400">Go back</a></div>`;
+            }
         };
         
+        // Use event delegation for dynamically added rows
         dom.systemsTableBody.addEventListener('click', handleSaveSystem);
         dom.wormholesTableBody.addEventListener('click', handleDeleteWormhole);
         dom.relationshipsTableBody.addEventListener('click', handleDeleteRelationship);
+        dom.regionEffectsTableBody.addEventListener('click', handleDeleteRegionEffect); // NEW
+
         dom.addWormholeForm.addEventListener('submit', handleAddWormhole);
         dom.addRelationshipForm.addEventListener('submit', handleAddRelationship);
         dom.promoteDevForm.addEventListener('submit', handlePromoteDeveloper);
+        dom.addRegionEffectForm.addEventListener('submit', handleAddRegionEffect); // NEW
         dom.searchInput.addEventListener('input', handleSearch);
         
         loadAdminData();

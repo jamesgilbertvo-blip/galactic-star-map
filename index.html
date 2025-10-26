@@ -116,9 +116,13 @@
                     <p id="sync-status" class="text-sm text-center text-gray-400 mt-2 h-4" aria-live="assertive"></p>
                 </div>
                 <form id="route-form" class="space-y-4">
-                    <input type="text" id="start-system-input" list="system-list" class="w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="Start System or #Position...">
-                    <input type="text" id="end-system-input" list="system-list" class="w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="End System or #Position...">
+                    <input type="text" id="start-system-input" list="system-list" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="Start System or #Position...">
+                    <input type="text" id="end-system-input" list="system-list" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="End System or #Position...">
                     <datalist id="system-list"></datalist>
+                    <div class="flex items-center pt-2">
+                        <input id="filter-avoid-slow" type="checkbox" class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
+                        <label for="filter-avoid-slow" class="ml-2 block text-sm text-gray-300">Avoid Slow Sublight Regions</label>
+                    </div>
                     <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md">Find Shortest Path</button>
                 </form>
                 <div id="route-details" aria-live="polite" class="space-y-2"></div>
@@ -126,7 +130,7 @@
                 <div class="border-t border-gray-700 pt-4 space-y-4">
                     <h3 class="text-lg font-semibold text-white">Search & Filters</h3>
                     <form id="search-form" class="space-y-2">
-                        <input type="text" id="search-input" list="system-list" class="w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="Find & Center on System...">
+                        <input type="text" id="search-input" list="system-list" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="Find & Center on System...">
                         <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md text-sm">Search</button>
                     </form>
                     <div class="space-y-2">
@@ -138,7 +142,7 @@
                              <input id="filter-wormholes" type="checkbox" checked class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
                              <label for="filter-wormholes" class="ml-2 block text-sm text-gray-300">Show Wormholes</label>
                         </div>
-                    </div>
+                        </div>
                 </div>
 
                 <div class="border-t border-gray-700 pt-4 space-y-2" aria-hidden="true">
@@ -147,7 +151,7 @@
                         <input id="toggle-unclaimed-names" type="checkbox" class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
                         <label for="toggle-unclaimed-names" class="ml-2 block text-sm text-gray-300">Show Unclaimed Names</label>
                     </div>
-                    <p class="text-xs text-gray-500">Click a system to highlight its range. Long-press to toggle.</p>
+                    <p class="text-xs text-gray-500">Click a system to highlight its range. Long-press/Shift+Click to toggle.</p>
                     <button id="reset-view-button" class="mt-2 w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-md text-sm">Reset View</button>
                 </div>
             </div>
@@ -186,7 +190,7 @@
         // --- State for "Center on Me" animation ---
         let pingAnimation = null; 
         let isAnimatingPing = false; 
-        let pingAnimationFrameId = null; // NEW: Store animation frame ID
+        let pingAnimationFrameId = null; 
         // --- END ---
 
         const dom = { 
@@ -208,6 +212,7 @@
             searchInput: document.getElementById('search-input'),
             filterCatapults: document.getElementById('filter-catapults'),
             filterWormholes: document.getElementById('filter-wormholes'),
+            filterAvoidSlow: document.getElementById('filter-avoid-slow'), // NEW Checkbox reference
             bulkSyncButton: document.getElementById('bulk-sync-button'),
             bulkSyncText: document.getElementById('bulk-sync-text'),
             centerMeButton: document.getElementById('center-me-button')
@@ -226,7 +231,7 @@
             try { 
                 const r = await apiFetch('/api/sync', {method:'POST'}); 
                 const d = await r.json(); 
-                dom.syncStatus.textContent = d.message; 
+                dom.syncStatus.textContent = d.message || d.error; // Show error message if sync fails 
                 if (r.ok) {
                     const statusRes = await apiFetch('/status'); 
                     const statusData = await statusRes.json();
@@ -234,9 +239,12 @@
                         lastKnownSystemId = statusData.last_known_system_id; 
                     }
                     await fetchMapData(false, oldSystemIds);
+                } else {
+                    console.error("Sync failed:", d.error || `Status ${r.status}`);
                 }
             } catch (e) { 
-                dom.syncStatus.textContent = 'Error: Could not connect.'; 
+                dom.syncStatus.textContent = 'Error: Could not connect to server.'; 
+                console.error("Sync connection error:", e);
             } finally { 
                 dom.syncButton.disabled = false; 
                 setTimeout(() => { dom.syncStatus.textContent = ''; }, 7000); 
@@ -268,29 +276,34 @@
         const openProfile = async () => { 
             dom.profileStatus.textContent = ''; 
             dom.newPasswordInput.value = ''; 
-            const r = await apiFetch('/api/profile'); 
-            const d = await r.json(); 
-            dom.apiKeyInput.value = d.api_key_set ? '(Key is set and encrypted)' : ''; 
-            dom.apiKeyInput.placeholder = d.api_key_set ? 'Enter a new key to overwrite' : 'Enter your game API key'; 
-            
-            if (showBulkSyncButton) {
-                dom.bulkSyncButton.classList.remove('hidden');
-                dom.bulkSyncText.classList.remove('hidden');
-                dom.bulkSyncButton.disabled = false;
-            } else {
-                dom.bulkSyncButton.classList.add('hidden');
-                dom.bulkSyncText.classList.add('hidden');
+            try {
+                const r = await apiFetch('/api/profile'); 
+                if (!r.ok) throw new Error(`Failed to load profile: ${r.statusText}`);
+                const d = await r.json(); 
+                dom.apiKeyInput.value = d.api_key_set ? '(Key is set and encrypted)' : ''; 
+                dom.apiKeyInput.placeholder = d.api_key_set ? 'Enter a new key to overwrite' : 'Enter your game API key'; 
+                
+                if (showBulkSyncButton) {
+                    dom.bulkSyncButton.classList.remove('hidden');
+                    dom.bulkSyncText.classList.remove('hidden');
+                    dom.bulkSyncButton.disabled = false;
+                } else {
+                    dom.bulkSyncButton.classList.add('hidden');
+                    dom.bulkSyncText.classList.add('hidden');
+                }
+                dom.profileView.classList.remove('hidden'); 
+            } catch (error) {
+                 dom.profileStatus.textContent = `Error: ${error.message}`;
+                 console.error("Profile load error:", error);
             }
-
-            dom.profileView.classList.remove('hidden'); 
         };
         const closeProfile = () => dom.profileView.classList.add('hidden');
-        const handleProfileUpdate = async (e) => { e.preventDefault(); dom.profileStatus.textContent = 'Saving...'; const p={}; if (dom.apiKeyInput.value && dom.apiKeyInput.value !== '(Key is set and encrypted)') p.api_key = dom.apiKeyInput.value; if (dom.newPasswordInput.value) p.password = dom.newPasswordInput.value; const r=await apiFetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); const d=await r.json(); dom.profileStatus.textContent = d.message; setTimeout(closeProfile, 2000); };
+        const handleProfileUpdate = async (e) => { e.preventDefault(); dom.profileStatus.textContent = 'Saving...'; const p={}; if (dom.apiKeyInput.value && dom.apiKeyInput.value !== '(Key is set and encrypted)') p.api_key = dom.apiKeyInput.value; if (dom.newPasswordInput.value) p.password = dom.newPasswordInput.value; try { const r=await apiFetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); if (!r.ok) throw new Error(`Save failed: ${r.statusText}`); const d=await r.json(); dom.profileStatus.textContent = d.message; setTimeout(closeProfile, 2000); } catch(error) { dom.profileStatus.textContent = `Error: ${error.message}`; console.error("Profile update error:", error); } };
         
         async function fetchMapData(shouldFit = true, oldSystemIds = null) { 
             try {
                 const r = await apiFetch('/api/systems'); 
-                if (!r.ok) { if (r.status === 401) handleLogout(); return; } 
+                if (!r.ok) { if (r.status === 401) handleLogout(); else throw new Error(`Failed to load systems: ${r.statusText}`); return; } 
                 const d = await r.json(); 
                 systems = d.systems; 
                 wormholes = d.wormholes; 
@@ -312,10 +325,32 @@
                     }
                 }
                 drawMap();
-            } catch (e) { console.error("Failed to fetch or draw map data:", e); } 
+            } catch (e) { console.error("Failed to fetch or draw map data:", e); /* Optionally show error to user */ } 
         }
 
-        async function findPath(startId, endId) { const r = await apiFetch('/api/path', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ start_id: startId, end_id: endId }), }); displayPathResults(await r.json()); }
+        // --- MODIFIED: findPath includes avoid_slow_regions ---
+        async function findPath(startId, endId) { 
+            const avoidSlow = dom.filterAvoidSlow.checked; // Get checkbox value
+            dom.routeDetailsContainer.innerHTML = '<p class="text-gray-400">Calculating route...</p>'; // Loading indicator
+            try {
+                const r = await apiFetch('/api/path', { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ 
+                        start_id: startId, 
+                        end_id: endId,
+                        avoid_slow_regions: avoidSlow // Send flag to backend
+                    }), 
+                }); 
+                const d = await r.json();
+                if (!r.ok) { throw new Error(d.error || `Calculation failed: ${r.statusText}`); }
+                displayPathResults(d); 
+            } catch (error) {
+                 console.error("Pathfinding error:", error);
+                 dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Error calculating route: ${error.message}</p>`;
+            }
+        }
+        // --- END MODIFIED ---
 
         function showLoginView() { dom.mapView.classList.add('hidden'); dom.registerView.classList.add('hidden'); dom.loginView.classList.remove('hidden'); }
         function showRegisterView() { dom.mapView.classList.add('hidden'); dom.loginView.classList.add('hidden'); dom.registerView.classList.remove('hidden'); }
@@ -335,55 +370,67 @@
 
             if (!isNewRegistration) {
                 const savedView = localStorage.getItem('mapViewTransform');
-                if (savedView) { viewTransform = JSON.parse(savedView); fetchMapData(false); } 
-                else { fetchMapData(true); }
+                if (savedView) { 
+                    try { viewTransform = JSON.parse(savedView); } catch { /* Ignore parse error, use default */ }
+                }
+                fetchMapData(savedView ? false : true); // Fit only if no saved view
             } else {
-                drawMap();
+                fetchMapData(true); // Always fit after registration
             }
         }
         function populateDataList() {
             dom.systemDataList.innerHTML = '';
             const options = new Set();
             Object.values(systems).forEach(s => {
-                options.add(s.name);
-                if (s.position) { options.add(`#${s.position}`); }
+                if (s.name) options.add(s.name);
+                if (s.position) options.add(`#${s.position}`); 
             });
             Array.from(options).sort().forEach(val => { const o = document.createElement('option'); o.value = val; dom.systemDataList.appendChild(o); });
         }
         
         function displayPathResults(result) {
-            dom.routeDetailsContainer.innerHTML = '';
+            dom.routeDetailsContainer.innerHTML = ''; // Clear loading/previous results
             calculatedPathNodes = result.path || [];
             const allNodes = {};
             calculatedPathNodes.forEach(p => allNodes[p.id] = p);
-            const startName = dom.startSystemInput.value;
-            const endName = dom.endSystemInput.value;
+            
+            // Get original input values *before* clearing them
+            const startInputVal = dom.startSystemInput.value || (allNodes[result.detailed_path?.[0]?.from_id]?.name || 'Start');
+            const endInputVal = dom.endSystemInput.value || (allNodes[result.detailed_path?.[result.detailed_path.length - 1]?.to_id]?.name || 'End');
+
+            // Clear inputs *after* getting values
             dom.startSystemInput.value = '';
             dom.endSystemInput.value = '';
             
             if (result.detailed_path && result.detailed_path.length > 0 && result.distance != null) {
-                let html = `<div class="flex justify-between items-center"><h2 class="text-lg font-semibold text-white">Route: ${startName} to ${endName}</h2><button id="clear-route-button" class="text-sm text-gray-400 hover:text-white focus:outline-none">&times; Clear</button></div><p class="text-sm text-gray-400">Total Distance: ${result.distance.toFixed(2)}</p><ol class="mt-2 space-y-2 text-sm">`;
+                let html = `<div class="flex justify-between items-center"><h2 class="text-lg font-semibold text-white">Route: ${startInputVal} to ${endInputVal}</h2><button id="clear-route-button" class="text-sm text-gray-400 hover:text-white focus:outline-none">&times; Clear</button></div><p class="text-sm text-gray-400">Total Distance: ${result.distance.toFixed(2)}</p><ol class="mt-2 space-y-2 text-sm max-h-60 overflow-y-auto pr-2">`; // Added max-height and scroll
                 
                 const getDisplayName = (node) => {
                     if (!node) return 'Unknown';
-                    if (node.name.startsWith("System ")) {
+                    // Use #Position format if it's a virtual node or default name
+                    if (node.id.toString().startsWith('virtual') || (node.name.startsWith("System ") && node.position)) {
                         return `#${node.position}`;
                     }
                     return node.name;
                 };
 
-                html += `<li class="text-gray-300">1. Start at: <span class="font-semibold text-white">${getDisplayName(allNodes[result.detailed_path[0].from_id])}</span></li>`;
+                const startNode = allNodes[result.detailed_path[0].from_id];
+                html += `<li class="text-gray-300">1. Start at: <span class="font-semibold text-white">${getDisplayName(startNode)}</span></li>`;
+                
                 result.detailed_path.forEach((leg, index) => { 
                     const travelMethod = leg.method.charAt(0).toUpperCase() + leg.method.slice(1); 
-                    let color = 'text-amber-400'; 
+                    let color = 'text-amber-400'; // Default sublight
                     if (leg.method === 'wormhole') color = 'text-red-400'; 
                     if (leg.method === 'catapult') color = 'text-lime-400'; 
-                    html += `<li class="text-gray-300">${index + 2}. Travel via <span class="font-semibold ${color}">${travelMethod}</span> to <span class="font-semibold text-white">${getDisplayName(allNodes[leg.to_id])}</span></li>`; 
+                    const toNode = allNodes[leg.to_id];
+                    html += `<li class="text-gray-300">${index + 2}. <span class="font-semibold ${color}">${travelMethod}</span> to <span class="font-semibold text-white">${getDisplayName(toNode)}</span></li>`; 
                 });
                 html += `</ol>`; 
                 dom.routeDetailsContainer.innerHTML = html;
-            } else { dom.routeDetailsContainer.innerHTML = `<h2 class="text-lg font-semibold text-white">No Route Found</h2><p class="text-yellow-400">A path could not be found between ${startName} and ${endName}.</p>`; }
-            drawMap();
+            } else { 
+                dom.routeDetailsContainer.innerHTML = `<h2 class="text-lg font-semibold text-white">No Route Found</h2><p class="text-yellow-400">A path could not be found between ${startInputVal} and ${endInputVal}. Check inputs or adjust filters.</p>`; 
+            }
+            drawMap(); // Redraw map to show the path lines
         }
 
         function toggleSidePanel() {
@@ -392,34 +439,32 @@
             dom.menuButton.setAttribute('aria-expanded', !isExpanded);
         }
         
-        // --- MODIFIED: Animation loop for the ping ---
+        // --- Animation loop for the ping ---
         function animatePing() {
             isAnimatingPing = true;
             
-            // If pingAnimation became null (e.g., button clicked again quickly), stop.
             if (!pingAnimation) {
                  isAnimatingPing = false;
                  pingAnimationFrameId = null;
-                 drawMap(); // Ensure final state is clean
+                 drawMap(); 
                  return;
             }
 
             const elapsed = Date.now() - pingAnimation.startTime;
             
             if (elapsed > pingAnimation.duration) {
-                // Animation finished
                 pingAnimation = null;
                 isAnimatingPing = false;
                 pingAnimationFrameId = null;
-                drawMap(); // Final draw to clear the circle
+                drawMap(); 
                 return;
             }
             
-            drawMap(); // Redraw the map (which will include the ping)
-            pingAnimationFrameId = requestAnimationFrame(animatePing); // Request next frame and store ID
+            drawMap(); 
+            pingAnimationFrameId = requestAnimationFrame(animatePing); 
         }
 
-        // --- MODIFIED: "Center on Me" function ---
+        // --- "Center on Me" function ---
         function centerOnMyLocation() {
             if (!lastKnownSystemId) {
                 alert("No location known. Please sync your data first.");
@@ -435,39 +480,26 @@
             viewTransform.translateX = (dom.canvas.width / 2) - (targetSystem.x * viewTransform.scale);
             viewTransform.translateY = (dom.canvas.height / 2) - (targetSystem.y * viewTransform.scale);
             
-            // Pan/zoom first
             drawMap(); 
             localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform));
+            highlightedSearchSystemId = null; // Clear search highlight
             
-            // Clear any old search highlight
-            highlightedSearchSystemId = null;
-            
-            // --- MODIFICATION: Always reset and restart animation ---
-            // If an animation is running, cancel its next frame
+            // Always reset and restart animation
             if (isAnimatingPing && pingAnimationFrameId) {
                 cancelAnimationFrame(pingAnimationFrameId);
             }
-            // Reset state regardless of whether it was running
             pingAnimation = null;
             isAnimatingPing = false;
             pingAnimationFrameId = null;
 
-            // Set up and start the new ping animation
-            pingAnimation = {
-                systemId: lastKnownSystemId,
-                startTime: Date.now(),
-                duration: 1200 // 1.2 second animation
-            };
-            
-            // Always start the animation loop now
+            pingAnimation = { systemId: lastKnownSystemId, startTime: Date.now(), duration: 1200 };
             animatePing(); 
-            // --- END MODIFICATION ---
         }
 
-        function clearRouteDisplay() { calculatedPathNodes = []; dom.routeDetailsContainer.innerHTML = ''; dom.startSystemInput.value = ''; dom.endSystemInput.value = ''; drawMap(); }
+        function clearRouteDisplay() { calculatedPathNodes = []; dom.routeDetailsContainer.innerHTML = ''; /* dom.startSystemInput.value = ''; dom.endSystemInput.value = ''; */ drawMap(); } // Don't clear inputs here
         function resizeCanvas() { if(dom.canvas.parentElement.clientWidth > 0){ dom.canvas.width = dom.canvas.clientWidth; dom.canvas.height = dom.canvas.clientHeight; if(dom.canvas.width > 0) drawMap(); } }
-        function fitMapToView() { if (Object.keys(systems).length === 0) return; let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity; Object.values(systems).forEach(s => { minX=Math.min(minX,s.x); maxX=Math.max(maxX,s.x); minY=Math.min(minY,s.y); maxY=Math.max(maxY,s.y); }); const mapW=maxX-minX, mapH=maxY-minY, mapCX=minX+mapW/2, mapCY=minY+mapH/2; const scale=Math.min(dom.canvas.width/(mapW*1.2), dom.canvas.height/(mapH*1.2))||1; viewTransform = { scale, translateX: (dom.canvas.width/2)-(mapCX*scale), translateY: (dom.canvas.height/2)-(mapCY*scale) }; localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform));}
-        const getSpiralPoint = (pos) => { const a=SPIRAL_TIGHTNESS, r=pos*SPIRAL_SCALE/1000; return { x: r*Math.cos(pos*a), y: r*Math.sin(pos*a) }; };
+        function fitMapToView() { if (Object.keys(systems).length === 0) return; let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity; Object.values(systems).forEach(s => { if (typeof s.x === 'number' && typeof s.y === 'number'){ minX=Math.min(minX,s.x); maxX=Math.max(maxX,s.x); minY=Math.min(minY,s.y); maxY=Math.max(maxY,s.y); }}); if (!isFinite(minX)) return; const mapW=maxX-minX || 1, mapH=maxY-minY || 1; const mapCX=minX+mapW/2, mapCY=minY+mapH/2; const scale=Math.min(dom.canvas.width/(mapW*1.2), dom.canvas.height/(mapH*1.2))||1; viewTransform = { scale, translateX: (dom.canvas.width/2)-(mapCX*scale), translateY: (dom.canvas.height/2)-(mapCY*scale) }; localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform));}
+        const getSpiralPoint = (pos) => { const a=SPIRAL_TIGHTNESS, r=parseFloat(pos)*SPIRAL_SCALE/1000; return { x: r*Math.cos(parseFloat(pos)*a), y: r*Math.sin(parseFloat(pos)*a) }; }; // Ensure pos is float
         
         function drawMap() {
             if(!dom.canvas.width || !dom.ctx) return; const ctx = dom.ctx;
@@ -476,17 +508,24 @@
             ctx.save();
             ctx.translate(viewTransform.translateX, viewTransform.translateY);
             ctx.scale(viewTransform.scale, viewTransform.scale);
-            if(Object.keys(systems).length > 0){ let maxPos=Math.max(...Object.values(systems).filter(s => s.position).map(s=>s.position)); if(maxPos>0){ ctx.strokeStyle='rgba(75,85,99,0.2)';ctx.lineWidth=1/viewTransform.scale;ctx.beginPath();const s=1;ctx.moveTo(0,0);for(let p=s;p<=maxPos*1.1;p+=s)ctx.lineTo(getSpiralPoint(p).x,getSpiralPoint(p).y);ctx.stroke();}}
             
+            // Draw spiral guide
+            const systemPositions = Object.values(systems).map(s => parseFloat(s.position)).filter(p => !isNaN(p));
+            if(systemPositions.length > 0){ let maxPos=Math.max(...systemPositions); if(maxPos>0){ ctx.strokeStyle='rgba(75,85,99,0.2)';ctx.lineWidth=1/viewTransform.scale;ctx.beginPath();const s=1;ctx.moveTo(0,0);for(let p=s;p<=maxPos*1.1;p+=s)ctx.lineTo(getSpiralPoint(p).x,getSpiralPoint(p).y);ctx.stroke();}}
+            
+            // Draw catapult ranges
             if (filterShowCatapults) {
                 Object.values(systems).forEach(sys => { 
-                    if (typeof sys.position !== 'number' || !sys.catapult_radius || sys.catapult_radius <= 0) return;
+                    const sysPos = parseFloat(sys.position);
+                    const sysRadius = parseFloat(sys.catapult_radius);
+                    if (isNaN(sysPos) || isNaN(sysRadius) || sysRadius <= 0) return;
+                    
                     const isToggled = toggledCatapultIds.has(String(sys.id));
                     if (!isToggled) { 
                         let rangeColor = 'rgba(132, 204, 22, 0.3)';
                         if (highlightedCatapultSystemId !== null) { rangeColor = (sys.id === highlightedCatapultSystemId) ? 'rgba(163, 230, 57, 0.9)' : 'rgba(132, 204, 22, 0.05)'; }
                         ctx.strokeStyle = rangeColor; ctx.lineWidth = 2 / viewTransform.scale;
-                        const startPos = sys.position - sys.catapult_radius; const endPos = sys.position + sys.catapult_radius;
+                        const startPos = sysPos - sysRadius; const endPos = sysPos + sysRadius;
                         const step = 1; 
                         ctx.beginPath(); ctx.moveTo(getSpiralPoint(startPos).x, getSpiralPoint(startPos).y);
                         for (let pos = startPos + step; pos < endPos; pos += step) { ctx.lineTo(getSpiralPoint(pos).x, getSpiralPoint(pos).y); }
@@ -495,30 +534,47 @@
                 });
             }
 
+            // Draw wormholes
             if (filterShowWormholes) {
                 ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)'; ctx.lineWidth = 1 / viewTransform.scale; ctx.setLineDash([5 / viewTransform.scale, 5 / viewTransform.scale]);
-                wormholes.forEach(wh => { const sA=systems[wh[0]], sB=systems[wh[1]]; if (sA && sB) { ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } });
+                wormholes.forEach(wh => { const sA=systems[wh[0]], sB=systems[wh[1]]; if (sA && sB && typeof sA.x === 'number' && typeof sB.x === 'number') { ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } });
                 ctx.setLineDash([]);
             }
             
+            // Draw path lines
             const calculatedPathIds = new Set(calculatedPathNodes.map(p => p.id));
             if (calculatedPathNodes.length > 1) {
                 for (let i = 0; i < calculatedPathNodes.length - 1; i++) {
                     const sA = calculatedPathNodes[i];
                     const sB = calculatedPathNodes[i + 1];
+                    const posA = parseFloat(sA.position); const posB = parseFloat(sB.position);
+
+                    if (isNaN(posA) || isNaN(posB)) continue; // Skip if positions invalid
+
                     const isKnownSystemA = !sA.id.toString().startsWith('virtual');
                     const isKnownSystemB = !sB.id.toString().startsWith('virtual');
                     const isWormhole = isKnownSystemA && isKnownSystemB && new Set(wormholes.map(wh => `${Math.min(wh[0],wh[1])}-${Math.max(wh[0],wh[1])}`)).has(`${Math.min(sA.id,sB.id)}-${Math.max(sA.id,sB.id)}`);
-                    const isCatapult = isKnownSystemA && isKnownSystemB && systems[sA.id]?.catapult_radius > 0 && Math.abs(sA.position - sB.position) <= systems[sA.id].catapult_radius;
+                    const sysAData = systems[sA.id];
+                    const isCatapult = isKnownSystemA && isKnownSystemB && sysAData?.catapult_radius > 0 && Math.abs(posA - posB) <= sysAData.catapult_radius;
+                    
                     if (isWormhole) { ctx.strokeStyle='#ef4444'; ctx.lineWidth=3/viewTransform.scale; ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } 
                     else if (isCatapult) { ctx.strokeStyle='#a3e635'; ctx.lineWidth=3/viewTransform.scale; ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } 
-                    else { 
+                    else { // Sublight
                         ctx.strokeStyle='#f59e0b'; ctx.lineWidth=3/viewTransform.scale;
-                        const s=1; ctx.beginPath(); ctx.moveTo(getSpiralPoint(sA.position).x,getSpiralPoint(sA.position).y); for (let j=1;j<=Math.floor(Math.abs(sB.position-sA.position)/s);j++)ctx.lineTo(getSpiralPoint(sA.position+(j*s*Math.sign(sB.position-sA.position))).x,getSpiralPoint(sA.position+(j*s*Math.sign(sB.position-sA.position))).y); ctx.lineTo(getSpiralPoint(sB.position).x,getSpiralPoint(sB.position).y);ctx.stroke();
+                        const s=1; ctx.beginPath(); ctx.moveTo(getSpiralPoint(posA).x,getSpiralPoint(posA).y); 
+                        const dist = Math.abs(posB-posA);
+                        const sign = Math.sign(posB-posA);
+                        for (let j=1;j<=Math.floor(dist/s);j++){
+                            const p = posA+(j*s*sign);
+                            ctx.lineTo(getSpiralPoint(p).x, getSpiralPoint(p).y);
+                        } 
+                        ctx.lineTo(getSpiralPoint(posB).x,getSpiralPoint(posB).y);
+                        ctx.stroke();
                     }
                 }
             }
             
+            // Draw systems
             Object.values(systems).forEach(sys => {
                 if (typeof sys.x !== 'number' || typeof sys.y !== 'number') { return; }
                 const isOnPath = calculatedPathIds.has(String(sys.id));
@@ -538,6 +594,7 @@
                 }
             });
 
+            // Draw virtual path nodes
             calculatedPathNodes.forEach(node => {
                 if (node.id.toString().startsWith('virtual')) {
                     const size = 8 / viewTransform.scale;
@@ -549,6 +606,7 @@
                 }
             });
 
+            // Draw labels
             Object.values(systems).forEach(sys => {
                 if (typeof sys.x !== 'number' || typeof sys.y !== 'number') return;
                 const isOnPath = calculatedPathIds.has(String(sys.id));
@@ -556,10 +614,17 @@
                 const isSearched = highlightedSearchSystemId === sys.id;
                 
                 let labelText = sys.name;
-                if (sys.name.startsWith("System ") && typeof sys.position === 'number') { labelText = `#${sys.position}`; }
-                const isDefaultName = labelText.startsWith("#");
+                const isDefaultName = labelText && labelText.startsWith("System ");
+                if (isDefaultName && typeof sys.position === 'string' && sys.position !== '') { 
+                    labelText = `#${sys.position}`; 
+                } else if (!labelText) {
+                    labelText = `ID: ${sys.id}`; // Fallback if name is missing
+                }
+
                 let shouldShowLabel = (isOnPath || isHovered || isSearched || viewTransform.scale > 0.8);
-                if (isDefaultName && !showUnclaimedNames && !isOnPath && !isHovered && !isSearched) { shouldShowLabel = false; }
+                if (isDefaultName && !showUnclaimedNames && !isOnPath && !isHovered && !isSearched) { 
+                    shouldShowLabel = false; 
+                }
 
                 if (shouldShowLabel) {
                     ctx.fillStyle = (isOnPath || isHovered || isSearched) ? '#ffffff' : '#e5e7eb';
@@ -569,6 +634,7 @@
                 }
             });
 
+            // Draw virtual node labels
             calculatedPathNodes.forEach(node => {
                 if (node.id.toString().startsWith('virtual')) {
                     const size = 8 / viewTransform.scale;
@@ -579,40 +645,41 @@
                 }
             });
 
-            // --- Draw the ping animation ---
+            // Draw the ping animation
             if (pingAnimation && systems[pingAnimation.systemId]) {
                 const sys = systems[pingAnimation.systemId];
-                const elapsed = Date.now() - pingAnimation.startTime;
-                const progress = elapsed / pingAnimation.duration; // 0.0 to 1.0
-                
-                const maxRadius = (Math.max(dom.canvas.width, dom.canvas.height) / 2) / viewTransform.scale;
-                const currentRadius = maxRadius * (1 - progress); 
-                const currentAlpha = 1 - (progress * 0.8); 
-                
-                if (currentRadius > 0 && currentAlpha > 0) { // Only draw if visible
-                    ctx.strokeStyle = `rgba(245, 158, 11, ${currentAlpha})`; 
-                    ctx.lineWidth = 4 / viewTransform.scale;
-                    ctx.beginPath();
-                    ctx.arc(sys.x, sys.y, currentRadius, 0, Math.PI * 2);
-                    ctx.stroke();
-                }
-
-                const delay = 150; 
-                if (elapsed > delay) {
-                    const progress2 = (elapsed - delay) / (pingAnimation.duration - delay);
-                    const currentRadius2 = maxRadius * (1 - progress2);
-                    const currentAlpha2 = 1 - (progress2 * 0.8);
+                if (typeof sys.x === 'number' && typeof sys.y === 'number') { // Check if system coords are valid
+                    const elapsed = Date.now() - pingAnimation.startTime;
+                    const progress = elapsed / pingAnimation.duration; 
                     
-                    if (currentRadius2 > 0 && currentAlpha2 > 0) { // Only draw if visible
-                        ctx.lineWidth = 2 / viewTransform.scale; 
-                        ctx.strokeStyle = `rgba(245, 158, 11, ${currentAlpha2})`; 
+                    const maxRadius = (Math.max(dom.canvas.width, dom.canvas.height) / 2) / viewTransform.scale;
+                    const currentRadius = Math.max(0, maxRadius * (1 - progress)); // Ensure radius doesn't go negative
+                    const currentAlpha = Math.max(0, 1 - (progress * 0.8)); 
+                    
+                    if (currentRadius > 0 && currentAlpha > 0) { 
+                        ctx.strokeStyle = `rgba(245, 158, 11, ${currentAlpha})`; 
+                        ctx.lineWidth = 4 / viewTransform.scale;
                         ctx.beginPath();
-                        ctx.arc(sys.x, sys.y, currentRadius2, 0, Math.PI * 2);
+                        ctx.arc(sys.x, sys.y, currentRadius, 0, Math.PI * 2);
                         ctx.stroke();
+                    }
+
+                    const delay = 150; 
+                    if (elapsed > delay) {
+                        const progress2 = (elapsed - delay) / (pingAnimation.duration - delay);
+                        const currentRadius2 = Math.max(0, maxRadius * (1 - progress2));
+                        const currentAlpha2 = Math.max(0, 1 - (progress2 * 0.8));
+                        
+                        if (currentRadius2 > 0 && currentAlpha2 > 0) { 
+                            ctx.lineWidth = 2 / viewTransform.scale; 
+                            ctx.strokeStyle = `rgba(245, 158, 11, ${currentAlpha2})`; 
+                            ctx.beginPath();
+                            ctx.arc(sys.x, sys.y, currentRadius2, 0, Math.PI * 2);
+                            ctx.stroke();
+                        }
                     }
                 }
             }
-            // --- END ---
 
             ctx.restore();
         }
@@ -645,45 +712,61 @@
         }
 
         function onInteractionMove(e) {
-            e.preventDefault();
+            // Prevent default only if dragging or multi-touch, allow text selection etc. otherwise
+             if (isDragging || (e.touches && e.touches.length > 1)) {
+                 e.preventDefault();
+             }
+
             const coords = getEventCoordinates(e);
             const worldX = (coords.x - viewTransform.translateX) / viewTransform.scale;
             const worldY = (coords.y - viewTransform.translateY) / viewTransform.scale;
             
             let currentlyHovering = null;
+            // Find closest system within hover radius
+            let minDistSq = Math.pow(10 / viewTransform.scale, 2);
             for (const system of Object.values(systems)) {
                 if (typeof system.x !== 'number' || typeof system.y !== 'number') continue;
                 const dx = worldX - system.x; const dy = worldY - system.y;
-                if (Math.sqrt(dx * dx + dy * dy) < (10 / viewTransform.scale)) {
-                    currentlyHovering = system; break;
+                const distSq = dx * dx + dy * dy;
+                if (distSq < minDistSq) {
+                     minDistSq = distSq;
+                     currentlyHovering = system; 
                 }
             }
             if (hoveredSystem !== currentlyHovering) { hoveredSystem = currentlyHovering; drawMap(); }
 
+            // Handle pinch zoom
             if (e.touches && e.touches.length === 2) {
-                isDragging = false;
+                isDragging = false; // Stop panning during pinch
+                clearTimeout(longPressTimer); // Cancel long press if pinching
                 const t1 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
                 const t2 = { x: e.touches[1].clientX, y: e.touches[1].clientY };
                 const dist = Math.hypot(t1.x - t2.x, t1.y - t2.y);
                 if (initialTouchDistance) {
                     const scaleFactor = dist / initialTouchDistance;
-                    const midX = (t1.x + t2.x) / 2 - dom.canvas.offsetLeft;
-                    const midY = (t1.y + t2.y) / 2 - dom.canvas.offsetTop;
+                    const rect = dom.canvas.getBoundingClientRect();
+                    const midX = (t1.x + t2.x) / 2 - rect.left; // Use rect for accuracy
+                    const midY = (t1.y + t2.y) / 2 - rect.top;
                     const worldMidX = (midX - viewTransform.translateX) / viewTransform.scale;
                     const worldMidY = (midY - viewTransform.translateY) / viewTransform.scale;
                     viewTransform.scale *= scaleFactor;
+                    // Clamp scale
+                    viewTransform.scale = Math.max(0.05, Math.min(viewTransform.scale, 10)); 
                     viewTransform.translateX = midX - worldMidX * viewTransform.scale;
                     viewTransform.translateY = midY - worldMidY * viewTransform.scale;
                     drawMap();
                 }
                 initialTouchDistance = dist;
                 return;
+            } else {
+                 initialTouchDistance = null; // Reset if not 2 touches
             }
-
+            
+            // Handle panning (mouse or single touch)
             let cursorStyle = hoveredSystem ? 'pointer' : 'grab';
-            if (isMouseDown) {
+            if (isMouseDown && (!e.touches || e.touches.length === 1)) { // Only pan with mouse or 1 touch
                 clearTimeout(longPressTimer);
-                if (!isDragging && (Math.abs(coords.x - dragStartPos.x) > 5 || Math.abs(coords.y - dragStartPos.y) > 5)) {
+                if (!isDragging && (Math.hypot(coords.x - dragStartPos.x, coords.y - dragStartPos.y) > 5)) { // Use hypotenuse for drag threshold
                     isDragging = true;
                 }
                 if (isDragging) {
@@ -695,41 +778,44 @@
                     lastDragPosition = { x: coords.x, y: coords.y };
                     drawMap();
                 }
-            } else {
-                dom.canvas.style.cursor = cursorStyle;
             }
+            dom.canvas.style.cursor = cursorStyle; // Update cursor style
         }
         
         function onInteractionEnd(e) {
             clearTimeout(longPressTimer);
-            if (!isDragging) {
+            if (!isDragging) { // Only process clicks/taps if not dragging
                 if (hoveredSystem) {
-                    if (e.shiftKey) {
+                    if (e.shiftKey) { // Shift+Click (Desktop)
                          if (hoveredSystem.catapult_radius > 0) {
                             const systemId = String(hoveredSystem.id);
                             if (toggledCatapultIds.has(systemId)) { toggledCatapultIds.delete(systemId); } 
                             else { toggledCatapultIds.add(systemId); }
                         }
-                    } else if (activeRouteInput) {
-                        if (hoveredSystem.name.startsWith("System ")) {
-                            activeRouteInput.value = `#${hoveredSystem.position}`;
+                    } else if (activeRouteInput) { // Click/Tap to populate route input
+                        const sysPosStr = systems[hoveredSystem.id]?.position; // Get updated position string
+                        if (hoveredSystem.name.startsWith("System ") && sysPosStr) {
+                            activeRouteInput.value = `#${sysPosStr}`;
                         } else {
                             activeRouteInput.value = hoveredSystem.name;
                         }
 
                         if (activeRouteInput === dom.startSystemInput) { dom.endSystemInput.focus(); } 
                         else { dom.routeForm.querySelector('button[type="submit"]').focus(); }
+                        activeRouteInput = null; // Deactivate after populating
                     }
-                    highlightedCatapultSystemId = hoveredSystem.id;
+                    highlightedCatapultSystemId = hoveredSystem.id; // Highlight range on simple click/tap
                 } else {
-                    highlightedCatapultSystemId = null;
+                    highlightedCatapultSystemId = null; // Clear range highlight if clicking empty space
                 }
                 drawMap();
             }
+            // Reset interaction state
             isMouseDown = false;
             isDragging = false;
             initialTouchDistance = null;
-            dom.canvas.style.cursor = hoveredSystem ? 'pointer' : 'grab';
+            dom.canvas.style.cursor = hoveredSystem ? 'pointer' : 'grab'; // Reset cursor
+            localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform)); // Save view on interaction end
         }
 
         function setupEventListeners() {
@@ -753,33 +839,53 @@
                 const startVal = dom.startSystemInput.value.trim();
                 const endVal = dom.endSystemInput.value.trim();
                 const parseInput = (val) => {
-                    if (val.startsWith('#')) { const pos = parseFloat(val.substring(1)); return !isNaN(pos) ? `pos:${pos}` : null; }
-                    const system = Object.values(systems).find(s => s.name.toLowerCase() === val.toLowerCase() || `#${s.position}` === val);
+                    if (!val) return null; // Handle empty input
+                    // Match # followed by digits and optional decimal part
+                    if (val.match(/^#\d+(\.\d+)?$/)) { 
+                        const pos = parseFloat(val.substring(1)); 
+                        return !isNaN(pos) ? `pos:${pos}` : null; 
+                    }
+                    // Find system by name (case-insensitive) OR exact #position match from datalist
+                    const system = Object.values(systems).find(s => 
+                        (s.name && s.name.toLowerCase() === val.toLowerCase()) || 
+                        (s.position && `#${s.position}` === val)
+                    );
                     return system ? `sys:${system.id}` : null;
                 };
                 const startId = parseInput(startVal);
                 const endId = parseInput(endVal);
                 if (startId && endId) { findPath(startId, endId); } 
-                else { dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Could not find one or both locations. Please use a known system name or format coordinates as #123.45</p>`; }
+                else { 
+                    dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Could not find one or both locations. Please use a known system name or format coordinates as #123.45</p>`; 
+                    calculatedPathNodes = []; // Clear old path on error
+                    drawMap();
+                }
             });
 
             dom.searchForm.addEventListener('submit', (e) => {
                 e.preventDefault();
                 const query = dom.searchInput.value.trim().toLowerCase();
-                const foundSystem = Object.values(systems).find(s => s.name.toLowerCase() === query || (s.position && `#${s.position}` === query.toLowerCase()));
-                if (foundSystem) {
-                    viewTransform.scale = 1.5;
+                const foundSystem = Object.values(systems).find(s => 
+                    (s.name && s.name.toLowerCase() === query) || 
+                    (s.position && `#${s.position}` === query)
+                 );
+                if (foundSystem && typeof foundSystem.x === 'number') { // Check coordinates are valid
+                    viewTransform.scale = 1.5; // Zoom in a bit more
                     viewTransform.translateX = (dom.canvas.width / 2) - (foundSystem.x * viewTransform.scale);
                     viewTransform.translateY = (dom.canvas.height / 2) - (foundSystem.y * viewTransform.scale);
                     
                     highlightedSearchSystemId = foundSystem.id;
                     drawMap();
+                    localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform)); // Save view after search
+
                     setTimeout(() => {
-                        highlightedSearchSystemId = null;
-                        drawMap();
+                        if (highlightedSearchSystemId === foundSystem.id) { // Only clear if it hasn't changed
+                            highlightedSearchSystemId = null;
+                            drawMap();
+                        }
                     }, 2000);
                 } else {
-                    alert("System not found in your discovered map.");
+                    alert("System not found or has invalid coordinates in your discovered map.");
                 }
             });
 
@@ -787,19 +893,43 @@
             dom.filterWormholes.addEventListener('change', (e) => { filterShowWormholes = e.target.checked; drawMap(); });
             dom.bulkSyncButton.addEventListener('click', handleBulkSync);
 
+            // Activate input field for map clicks
             dom.startSystemInput.addEventListener('focus', () => { activeRouteInput = dom.startSystemInput; });
             dom.endSystemInput.addEventListener('focus', () => { activeRouteInput = dom.endSystemInput; });
+            // Deactivate if clicking outside relevant areas
             document.addEventListener('click', (e) => { if (!dom.routeForm.contains(e.target) && !dom.canvas.contains(e.target)) { activeRouteInput = null; }});
+            // Clear route display button
             dom.routeDetailsContainer.addEventListener('click', (e) => { if (e.target && e.target.id === 'clear-route-button') { clearRouteDisplay(); } });
 
-            dom.canvas.addEventListener('mousedown', onInteractionStart); dom.canvas.addEventListener('mousemove', onInteractionMove);
-            dom.canvas.addEventListener('mouseup', onInteractionEnd); dom.canvas.addEventListener('mouseleave', onInteractionEnd);
-            dom.canvas.addEventListener('wheel', (e) => { e.preventDefault(); const s=1.1, mX=e.clientX-dom.canvas.offsetLeft, mY=e.clientY-dom.canvas.offsetTop; const wX=(mX-viewTransform.translateX)/viewTransform.scale, wY=(mY-viewTransform.translateY)/viewTransform.scale; if(e.deltaY<0)viewTransform.scale*=s; else viewTransform.scale/=s; viewTransform.translateX=mX-wX*viewTransform.scale; viewTransform.translateY=mY-wY*viewTransform.scale; drawMap(); localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform)); });
+            // Canvas interaction listeners
+            dom.canvas.addEventListener('mousedown', onInteractionStart); 
+            dom.canvas.addEventListener('mousemove', onInteractionMove);
+            dom.canvas.addEventListener('mouseup', onInteractionEnd); 
+            dom.canvas.addEventListener('mouseleave', onInteractionEnd); // Treat leaving canvas like mouse up
+            dom.canvas.addEventListener('wheel', (e) => { 
+                e.preventDefault(); 
+                const scaleAmount = 1.1;
+                const rect = dom.canvas.getBoundingClientRect();
+                const mX=e.clientX - rect.left, mY=e.clientY - rect.top; 
+                const wX=(mX-viewTransform.translateX)/viewTransform.scale, wY=(mY-viewTransform.translateY)/viewTransform.scale; 
+                
+                if(e.deltaY < 0) viewTransform.scale *= scaleAmount; // Zoom in
+                else viewTransform.scale /= scaleAmount; // Zoom out
+                
+                // Clamp scale
+                viewTransform.scale = Math.max(0.05, Math.min(viewTransform.scale, 10)); 
+
+                viewTransform.translateX=mX-wX*viewTransform.scale; 
+                viewTransform.translateY=mY-wY*viewTransform.scale; 
+                drawMap(); 
+                localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform)); 
+            }, { passive: false }); // Need passive: false to preventDefault()
             
-            dom.canvas.addEventListener('touchstart', onInteractionStart);
-            dom.canvas.addEventListener('touchmove', onInteractionMove);
+            // Touch events
+            dom.canvas.addEventListener('touchstart', onInteractionStart, { passive: false }); // Need passive: false for preventDefault in move
+            dom.canvas.addEventListener('touchmove', onInteractionMove, { passive: false }); // Need passive: false for preventDefault
             dom.canvas.addEventListener('touchend', onInteractionEnd);
-            dom.canvas.addEventListener('touchcancel', onInteractionEnd);
+            dom.canvas.addEventListener('touchcancel', onInteractionEnd); // Treat cancel like end
         }
         
         setupEventListeners();
