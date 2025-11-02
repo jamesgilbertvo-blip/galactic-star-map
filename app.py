@@ -240,7 +240,6 @@ def bulk_add_systems(systems_list, faction_id, cursor, pg_compat, param):
     return len(links_to_insert)
 
 # --- ROUTES ---
-# --- MODIFIED: /api/sync with region logic ---
 @app.route('/api/sync', methods=['POST'])
 def sync_data():
     if 'user_id' not in session or session.get('is_developer'): return jsonify({'error': 'Not authenticated or developer accounts cannot sync'}), 401
@@ -335,6 +334,7 @@ def sync_data():
         current_system_id = None
         current_sys_details = None
         current_sys_pos_str = None
+        current_sys_pos_decimal = None # Store decimal version
         region_name = None
         region_effect_name = None
         
@@ -380,7 +380,7 @@ def sync_data():
                  current_system_id = None # Invalidate if processing failed
                  continue
 
-        if not current_system_id or current_sys_details is None or current_sys_pos_str is None:
+        if not current_system_id or current_sys_details is None or current_sys_pos_decimal is None:
               return jsonify({'message': 'Could not process current system data from API response.'}), 500
 
         # Now handle other discovered systems
@@ -405,7 +405,7 @@ def sync_data():
         # Bulk insert/ignore nearby systems (excluding current system, already handled)
         bulk_add_systems([s for s in all_nearby_systems.values() if s['system_id'] != current_system_id], faction_id, cursor, pg_compat, param)
         
-        # --- NEW: Region Extrapolation Logic ---
+        # --- Region Extrapolation Logic ---
         if region_name and current_sys_pos_decimal is not None:
              # Update region_effects table first
              if region_effect_name:
@@ -418,7 +418,7 @@ def sync_data():
              # Calculate region range based on current system's position
              region_size = decimal.Decimal('50.0')
              region_start = (current_sys_pos_decimal // region_size) * region_size
-             region_end = region_start + region_size # Exclusive end
+             region_end = region_start + region_size # Exclusive end (e.g., 8750.0 to 8800.0)
              print(f"Extrapolating region '{region_name}' to systems with position >= {region_start} and < {region_end}")
 
              # Update all systems within this coordinate range
@@ -432,8 +432,7 @@ def sync_data():
              except Exception as update_err:
                  print(f"Error during region extrapolation update: {update_err}", file=sys.stderr)
                  conn.rollback() # Rollback just this update if it fails
-        # --- END NEW ---
-
+        
         # Update catapult radius for current system
         if structures_data:
             max_catapult_radius = 0
@@ -503,7 +502,6 @@ def sync_data():
         return jsonify({'error': f'An internal error occurred during sync: {e}'}), 500
     finally:
         if conn: conn.close()
-# --- END MODIFIED ---
         
 @app.route('/register', methods=['POST'])
 def register():
@@ -849,32 +847,105 @@ def delete_wormhole():
     cursor.execute(f"DELETE FROM wormholes WHERE system_a_id = {param} AND system_b_id = {param}", (min(id_a, id_b), max(id_a, id_b))); conn.commit(); conn.close()
     return jsonify({'message': 'Wormhole deleted successfully'})
 
-# --- NEW: Admin Region Effects Endpoints ---
+# --- MODIFIED: Admin Region Effects Endpoints ---
 @app.route('/api/admin/region_effects')
 @admin_required
 def get_region_effects():
     conn, cursor = get_db_connection();
-    cursor.execute('SELECT region_name, effect_name FROM region_effects ORDER BY region_name');
-    effects = cursor.fetchall(); conn.close()
-    return jsonify(effects)
+    
+    # Join with systems to find the min position for each region
+    query = """
+        SELECT 
+            re.region_name, 
+            re.effect_name, 
+            MIN(s.position) as min_pos
+        FROM 
+            region_effects re
+        LEFT JOIN 
+            systems s ON re.region_name = s.region_name
+        GROUP BY 
+            re.region_name, re.effect_name
+        ORDER BY 
+            re.region_name;
+    """
+    cursor.execute(query)
+    effects = cursor.fetchall()
+    conn.close()
+    
+    # Calculate ranges in Python
+    output_effects = []
+    region_size = decimal.Decimal('50.0')
+    region_end_offset = decimal.Decimal('49.99') # for display
+    
+    for effect in effects:
+        effect_data = dict(effect)
+        if effect_data['min_pos'] is not None:
+            try:
+                min_pos_decimal = decimal.Decimal(effect_data['min_pos'])
+                region_start = (min_pos_decimal // region_size) * region_size
+                region_end_display = region_start + region_end_offset
+                effect_data['range_start'] = f"{region_start:.2f}"
+                effect_data['range_end'] = f"{region_end_display:.2f}"
+            except (decimal.InvalidOperation, TypeError):
+                 effect_data['range_start'] = 'Error'
+                 effect_data['range_end'] = 'Error'
+        else:
+            effect_data['range_start'] = 'N/A'
+            effect_data['range_end'] = 'N/A'
+        
+        # Don't need to send min_pos to frontend
+        del effect_data['min_pos']
+        output_effects.append(effect_data)
+
+    return jsonify(output_effects)
 
 @app.route('/api/admin/add_region_effect', methods=['POST'])
 @admin_required
 def add_region_effect():
     data = request.get_json()
     region_name, effect_name = data.get('region_name'), data.get('effect_name')
+    position_str = data.get('position') # Optional position
+    
     if not region_name or not effect_name: 
         return jsonify({'error': 'Region name and effect name are required'}), 400
     
     conn, cursor = get_db_connection()
     pg_compat = bool(DATABASE_URL); param = '%s' if pg_compat else '?'
+    systems_updated_count = 0
+    message = "Region effect saved."
+    
     try:
+        # Step 1: Always update the region_effects table
         if pg_compat:
             cursor.execute(f"INSERT INTO region_effects (region_name, effect_name) VALUES ({param}, {param}) ON CONFLICT (region_name) DO UPDATE SET effect_name = EXCLUDED.effect_name", (region_name, effect_name))
         else:
             cursor.execute("INSERT OR REPLACE INTO region_effects (region_name, effect_name) VALUES (?, ?)", (region_name, effect_name))
+        
+        # Step 2: If position is provided, update systems table
+        if position_str:
+            try:
+                pos_decimal = decimal.Decimal(str(position_str)) # Ensure it's a decimal
+                region_size = decimal.Decimal('50.0')
+                region_start = (pos_decimal // region_size) * region_size
+                region_end = region_start + region_size # Exclusive end
+                
+                if pg_compat:
+                    cursor.execute(f"UPDATE systems SET region_name = {param} WHERE position >= {param} AND position < {param}", (region_name, region_start, region_end))
+                else:
+                    cursor.execute("UPDATE systems SET region_name = ? WHERE position >= ? AND position < ?", (region_name, float(region_start), float(region_end)))
+                
+                systems_updated_count = cursor.rowcount
+                message = f"Effect saved. Updated {systems_updated_count} systems in range {region_start:.2f} - {region_end-decimal.Decimal('0.01'):.2f} to region '{region_name}'."
+            except (decimal.InvalidOperation, ValueError) as e:
+                conn.rollback() # Rollback the transaction
+                return jsonify({'error': f'Invalid position number: {e}'}), 400
+            except Exception as update_err:
+                 conn.rollback()
+                 return jsonify({'error': f'Error updating systems table: {update_err}'}), 500
+
         conn.commit()
-        return jsonify({'message': 'Region effect saved successfully'})
+        return jsonify({'message': message})
+        
     except Exception as e:
         conn.rollback(); return jsonify({'error': f'Database error: {e}'}), 500
     finally: conn.close()
@@ -885,10 +956,24 @@ def delete_region_effect():
     data = request.get_json(); region_name = data.get('region_name')
     if not region_name: return jsonify({'error': 'Region name is required'}), 400
     conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?';
-    cursor.execute(f"DELETE FROM region_effects WHERE region_name = {param}", (region_name,))
-    conn.commit(); conn.close(); 
-    return jsonify({'message': 'Region effect deleted'})
-# --- END NEW ---
+    try:
+        # Step 1: Delete from region_effects
+        cursor.execute(f"DELETE FROM region_effects WHERE region_name = {param}", (region_name,))
+        if cursor.rowcount == 0:
+            return jsonify({'message': 'Effect not found, nothing to delete.'})
+            
+        # Step 2: Unset this region_name from all systems
+        cursor.execute(f"UPDATE systems SET region_name = NULL WHERE region_name = {param}", (region_name,))
+        systems_updated_count = cursor.rowcount
+        
+        conn.commit(); 
+        return jsonify({'message': f"Region effect '{region_name}' deleted. Unset region from {systems_updated_count} systems."})
+    except Exception as e:
+         conn.rollback()
+         return jsonify({'error': f'Database error: {e}'}), 500
+    finally:
+         conn.close()
+# --- END MODIFIED ---
     
 @app.route('/api/systems')
 def get_systems_data():
@@ -916,7 +1001,6 @@ def get_systems_data():
     conn.close()
     return jsonify({'systems': systems_dict, 'wormholes': visible_wormholes})
 
-# --- MODIFIED: /api/path with region avoidance ---
 @app.route('/api/path', methods=['POST'])
 def calculate_path():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
@@ -926,7 +1010,7 @@ def calculate_path():
     penalty_multiplier = 100 # Define the penalty multiplier
     
     if not start_input or not end_input: return jsonify({'error': 'start_id and end_id are required'}), 400
-    conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
+    conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?';
     user_faction_id = session.get('faction_id')
     relationships = {}
     if user_faction_id:
@@ -1091,7 +1175,7 @@ def calculate_path():
         detailed_path.append({'from_id': from_node_id, 'to_id': to_node_id, 'method': method or 'unknown'})
     
     return jsonify({'path': path_for_json, 'detailed_path': detailed_path, 'distance': round(total_distance, 2)})
-# --- END MODIFIED ---
+
 
 # Initial setup call
 try:
