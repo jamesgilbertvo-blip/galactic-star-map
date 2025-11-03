@@ -1001,6 +1001,7 @@ def get_systems_data():
     conn.close()
     return jsonify({'systems': systems_dict, 'wormholes': visible_wormholes})
 
+# --- MODIFIED: /api/path with NEW catapult logic ---
 @app.route('/api/path', methods=['POST'])
 def calculate_path():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
@@ -1010,7 +1011,7 @@ def calculate_path():
     penalty_multiplier = 100 # Define the penalty multiplier
     
     if not start_input or not end_input: return jsonify({'error': 'start_id and end_id are required'}), 400
-    conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?';
+    conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
     user_faction_id = session.get('faction_id')
     relationships = {}
     if user_faction_id:
@@ -1097,19 +1098,27 @@ def calculate_path():
                                  (neighbor_sys.get('region_name') in slow_region_names)
                 if is_slow_travel:
                     cost = sublight_dist * penalty_multiplier # Apply penalty
-                    # print(f"Applying penalty: {current_id} ({current_sys.get('region_name')}) -> {neighbor_id} ({neighbor_sys.get('region_name')}) | Dist: {sublight_dist:.2f} -> Cost: {cost:.2f}") # Debug
 
             id_pair = tuple(sorted((current_id, neighbor_id)))
             
-            # Check Catapult (cost 0, overrides sublight if cheaper)
-            # Use float comparison for radius check
-            if current_sys.get('radius', 0) > 0 and sublight_dist <= current_sys['radius']:
+            # --- NEW CATAPULT LOGIC ---
+            # Check Catapult (cost 0 or partial cost, overrides sublight if cheaper)
+            catapult_radius = current_sys.get('radius', 0)
+            if catapult_radius > 0:
                 owner = current_sys.get('owner')
                 is_allowed = (owner is None) or (owner == user_faction_id) or (relationships.get(owner) == 'allied')
-                if is_allowed: 
-                     # Only take catapult if it's cheaper than potentially penalized sublight
-                     if 0 < cost:
-                         cost, method = 0, 'catapult'
+                
+                if is_allowed:
+                    if sublight_dist <= catapult_radius:
+                        # Full jump is covered
+                        if 0 < cost: # Only take if cheaper than current cost (e.g., penalized sublight)
+                            cost, method = 0, 'catapult'
+                    else:
+                        # Partial jump is covered
+                        partial_cost = sublight_dist - catapult_radius
+                        if partial_cost < cost: # Only take if cheaper than current cost
+                            cost, method = partial_cost, 'catapult'
+            # --- END NEW CATAPULT LOGIC ---
 
             # Check Wormhole (cost 0, overrides sublight/catapult if cheaper)
             if id_pair in wormhole_pairs:
