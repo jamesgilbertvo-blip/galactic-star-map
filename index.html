@@ -142,7 +142,7 @@
                              <input id="filter-wormholes" type="checkbox" checked class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
                              <label for="filter-wormholes" class="ml-2 block text-sm text-gray-300">Show Wormholes</label>
                         </div>
-                        </div>
+                    </div>
                 </div>
 
                 <div class="border-t border-gray-700 pt-4 space-y-2" aria-hidden="true">
@@ -171,7 +171,10 @@
 
     <script>
     document.addEventListener('DOMContentLoaded', () => {
-        let systems = {}; let wormholes = []; let calculatedPathNodes = []; let viewTransform = { scale: 1, translateX: 0, translateY: 0 }; 
+        let systems = {}; let wormholes = []; 
+        let calculatedPathNodes = []; 
+        let calculatedPathLegs = [];  
+        let viewTransform = { scale: 1, translateX: 0, translateY: 0 }; 
         let isMouseDown = false; let isDragging = false; let dragStartPos = { x: 0, y: 0 }; let lastDragPosition = {x:0, y:0};
         const SPIRAL_TIGHTNESS = 0.1; const SPIRAL_SCALE = 50;
         let toggledCatapultIds = new Set();
@@ -187,11 +190,9 @@
         let showBulkSyncButton = false;
         let lastKnownSystemId = null; 
         
-        // --- State for "Center on Me" animation ---
         let pingAnimation = null; 
         let isAnimatingPing = false; 
         let pingAnimationFrameId = null; 
-        // --- END ---
 
         const dom = { 
             loginView: document.getElementById('login-view'), mapView: document.getElementById('map-view'), registerView: document.getElementById('register-view'), 
@@ -212,7 +213,7 @@
             searchInput: document.getElementById('search-input'),
             filterCatapults: document.getElementById('filter-catapults'),
             filterWormholes: document.getElementById('filter-wormholes'),
-            filterAvoidSlow: document.getElementById('filter-avoid-slow'), // NEW Checkbox reference
+            filterAvoidSlow: document.getElementById('filter-avoid-slow'), 
             bulkSyncButton: document.getElementById('bulk-sync-button'),
             bulkSyncText: document.getElementById('bulk-sync-text'),
             centerMeButton: document.getElementById('center-me-button')
@@ -231,7 +232,7 @@
             try { 
                 const r = await apiFetch('/api/sync', {method:'POST'}); 
                 const d = await r.json(); 
-                dom.syncStatus.textContent = d.message || d.error; // Show error message if sync fails 
+                dom.syncStatus.textContent = d.message || d.error; 
                 if (r.ok) {
                     const statusRes = await apiFetch('/status'); 
                     const statusData = await statusRes.json();
@@ -328,10 +329,9 @@
             } catch (e) { console.error("Failed to fetch or draw map data:", e); /* Optionally show error to user */ } 
         }
 
-        // --- MODIFIED: findPath includes avoid_slow_regions ---
         async function findPath(startId, endId) { 
-            const avoidSlow = dom.filterAvoidSlow.checked; // Get checkbox value
-            dom.routeDetailsContainer.innerHTML = '<p class="text-gray-400">Calculating route...</p>'; // Loading indicator
+            const avoidSlow = dom.filterAvoidSlow.checked; 
+            dom.routeDetailsContainer.innerHTML = '<p class="text-gray-400">Calculating route...</p>'; 
             try {
                 const r = await apiFetch('/api/path', { 
                     method: 'POST', 
@@ -339,7 +339,7 @@
                     body: JSON.stringify({ 
                         start_id: startId, 
                         end_id: endId,
-                        avoid_slow_regions: avoidSlow // Send flag to backend
+                        avoid_slow_regions: avoidSlow 
                     }), 
                 }); 
                 const d = await r.json();
@@ -350,7 +350,6 @@
                  dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Error calculating route: ${error.message}</p>`;
             }
         }
-        // --- END MODIFIED ---
 
         function showLoginView() { dom.mapView.classList.add('hidden'); dom.registerView.classList.add('hidden'); dom.loginView.classList.remove('hidden'); }
         function showRegisterView() { dom.mapView.classList.add('hidden'); dom.loginView.classList.add('hidden'); dom.registerView.classList.remove('hidden'); }
@@ -373,9 +372,9 @@
                 if (savedView) { 
                     try { viewTransform = JSON.parse(savedView); } catch { /* Ignore parse error, use default */ }
                 }
-                fetchMapData(savedView ? false : true); // Fit only if no saved view
+                fetchMapData(savedView ? false : true); 
             } else {
-                fetchMapData(true); // Always fit after registration
+                fetchMapData(true); 
             }
         }
         function populateDataList() {
@@ -389,39 +388,52 @@
         }
         
         function displayPathResults(result) {
-            dom.routeDetailsContainer.innerHTML = ''; // Clear loading/previous results
-            calculatedPathNodes = result.path || [];
+            dom.routeDetailsContainer.innerHTML = ''; 
+            calculatedPathNodes = result.path || []; 
+            calculatedPathLegs = result.detailed_path || []; 
+
             const allNodes = {};
             calculatedPathNodes.forEach(p => allNodes[p.id] = p);
             
-            // Get original input values *before* clearing them
-            const startInputVal = dom.startSystemInput.value || (allNodes[result.detailed_path?.[0]?.from_id]?.name || 'Start');
-            const endInputVal = dom.endSystemInput.value || (allNodes[result.detailed_path?.[result.detailed_path.length - 1]?.to_id]?.name || 'End');
+            const startInputVal = dom.startSystemInput.value || (allNodes[calculatedPathLegs?.[0]?.from_id]?.name || 'Start');
+            const endInputVal = dom.endSystemInput.value || (allNodes[calculatedPathLegs?.[calculatedPathLegs.length - 1]?.to_id]?.name || 'End');
 
-            // Clear inputs *after* getting values
             dom.startSystemInput.value = '';
             dom.endSystemInput.value = '';
             
-            if (result.detailed_path && result.detailed_path.length > 0 && result.distance != null) {
-                let html = `<div class="flex justify-between items-center"><h2 class="text-lg font-semibold text-white">Route: ${startInputVal} to ${endInputVal}</h2><button id="clear-route-button" class="text-sm text-gray-400 hover:text-white focus:outline-none">&times; Clear</button></div><p class="text-sm text-gray-400">Total Distance: ${result.distance.toFixed(2)}</p><ol class="mt-2 space-y-2 text-sm max-h-60 overflow-y-auto pr-2">`; // Added max-height and scroll
+            if (calculatedPathLegs.length > 0 && result.distance != null) {
+                let html = `<div class="flex justify-between items-center"><h2 class="text-lg font-semibold text-white">Route: ${startInputVal} to ${endInputVal}</h2><button id="clear-route-button" class="text-sm text-gray-400 hover:text-white focus:outline-none">&times; Clear</button></div><p class="text-sm text-gray-400">Total Distance: ${result.distance.toFixed(2)}</p><ol class="mt-2 space-y-2 text-sm max-h-60 overflow-y-auto pr-2">`;
                 
                 const getDisplayName = (node) => {
                     if (!node) return 'Unknown';
-                    // Use #Position format if it's a virtual node or default name
                     if (node.id.toString().startsWith('virtual') || (node.name.startsWith("System ") && node.position)) {
                         return `#${node.position}`;
                     }
                     return node.name;
                 };
 
-                const startNode = allNodes[result.detailed_path[0].from_id];
+                const startNode = allNodes[calculatedPathLegs[0].from_id];
                 html += `<li class="text-gray-300">1. Start at: <span class="font-semibold text-white">${getDisplayName(startNode)}</span></li>`;
                 
-                result.detailed_path.forEach((leg, index) => { 
-                    const travelMethod = leg.method.charAt(0).toUpperCase() + leg.method.slice(1); 
+                // --- MODIFIED: displayPathResults loop ---
+                calculatedPathLegs.forEach((leg, index) => { 
+                    let travelMethod = leg.method.charAt(0).toUpperCase() + leg.method.slice(1); 
                     let color = 'text-amber-400'; // Default sublight
-                    if (leg.method === 'wormhole') color = 'text-red-400'; 
-                    if (leg.method === 'catapult') color = 'text-lime-400'; 
+                    
+                    if (leg.method === 'wormhole') {
+                        color = 'text-red-400'; 
+                        travelMethod = 'Wormhole';
+                    } else if (leg.method === 'catapult') {
+                        color = 'text-lime-400'; 
+                        travelMethod = 'Catapult';
+                    } else if (leg.method === 'catapult_sublight') { // NEW
+                        color = 'text-lime-400'; // Still green, but with new text
+                        travelMethod = 'Catapult + Sublight';
+                    } else {
+                        travelMethod = 'Sublight';
+                    }
+                    // --- END MODIFIED ---
+
                     const toNode = allNodes[leg.to_id];
                     html += `<li class="text-gray-300">${index + 2}. <span class="font-semibold ${color}">${travelMethod}</span> to <span class="font-semibold text-white">${getDisplayName(toNode)}</span></li>`; 
                 });
@@ -430,7 +442,7 @@
             } else { 
                 dom.routeDetailsContainer.innerHTML = `<h2 class="text-lg font-semibold text-white">No Route Found</h2><p class="text-yellow-400">A path could not be found between ${startInputVal} and ${endInputVal}. Check inputs or adjust filters.</p>`; 
             }
-            drawMap(); // Redraw map to show the path lines
+            drawMap(); 
         }
 
         function toggleSidePanel() {
@@ -439,7 +451,6 @@
             dom.menuButton.setAttribute('aria-expanded', !isExpanded);
         }
         
-        // --- Animation loop for the ping ---
         function animatePing() {
             isAnimatingPing = true;
             
@@ -464,7 +475,6 @@
             pingAnimationFrameId = requestAnimationFrame(animatePing); 
         }
 
-        // --- "Center on Me" function ---
         function centerOnMyLocation() {
             if (!lastKnownSystemId) {
                 alert("No location known. Please sync your data first.");
@@ -482,9 +492,8 @@
             
             drawMap(); 
             localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform));
-            highlightedSearchSystemId = null; // Clear search highlight
+            highlightedSearchSystemId = null; 
             
-            // Always reset and restart animation
             if (isAnimatingPing && pingAnimationFrameId) {
                 cancelAnimationFrame(pingAnimationFrameId);
             }
@@ -496,10 +505,41 @@
             animatePing(); 
         }
 
-        function clearRouteDisplay() { calculatedPathNodes = []; dom.routeDetailsContainer.innerHTML = ''; /* dom.startSystemInput.value = ''; dom.endSystemInput.value = ''; */ drawMap(); } // Don't clear inputs here
+        function clearRouteDisplay() { 
+            calculatedPathNodes = []; 
+            calculatedPathLegs = []; 
+            dom.routeDetailsContainer.innerHTML = ''; 
+            drawMap(); 
+        } 
         function resizeCanvas() { if(dom.canvas.parentElement.clientWidth > 0){ dom.canvas.width = dom.canvas.clientWidth; dom.canvas.height = dom.canvas.clientHeight; if(dom.canvas.width > 0) drawMap(); } }
         function fitMapToView() { if (Object.keys(systems).length === 0) return; let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity; Object.values(systems).forEach(s => { if (typeof s.x === 'number' && typeof s.y === 'number'){ minX=Math.min(minX,s.x); maxX=Math.max(maxX,s.x); minY=Math.min(minY,s.y); maxY=Math.max(maxY,s.y); }}); if (!isFinite(minX)) return; const mapW=maxX-minX || 1, mapH=maxY-minY || 1; const mapCX=minX+mapW/2, mapCY=minY+mapH/2; const scale=Math.min(dom.canvas.width/(mapW*1.2), dom.canvas.height/(mapH*1.2))||1; viewTransform = { scale, translateX: (dom.canvas.width/2)-(mapCX*scale), translateY: (dom.canvas.height/2)-(mapCY*scale) }; localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform));}
-        const getSpiralPoint = (pos) => { const a=SPIRAL_TIGHTNESS, r=parseFloat(pos)*SPIRAL_SCALE/1000; return { x: r*Math.cos(parseFloat(pos)*a), y: r*Math.sin(parseFloat(pos)*a) }; }; // Ensure pos is float
+        const getSpiralPoint = (pos) => { const a=SPIRAL_TIGHTNESS, r=parseFloat(pos)*SPIRAL_SCALE/1000; return { x: r*Math.cos(parseFloat(pos)*a), y: r*Math.sin(parseFloat(pos)*a) }; }; 
+
+        // --- NEW: Helper function to draw sublight spiral ---
+        function drawSublight(posA, posB) {
+            if (isNaN(posA) || isNaN(posB)) return;
+            const ctx = dom.ctx; // Get context
+            ctx.strokeStyle = '#f59e0b'; // yellow
+            ctx.lineWidth = 3 / viewTransform.scale;
+            const s = 1; // Step
+            ctx.beginPath(); 
+            
+            const startPoint = getSpiralPoint(posA);
+            ctx.moveTo(startPoint.x, startPoint.y); 
+            
+            const dist = Math.abs(posB - posA);
+            const sign = Math.sign(posB - posA);
+            
+            for (let j = 1; j <= Math.floor(dist / s); j++) {
+                const p = posA + (j * s * sign);
+                const point = getSpiralPoint(p);
+                ctx.lineTo(point.x, point.y);
+            } 
+            const endPoint = getSpiralPoint(posB);
+            ctx.lineTo(endPoint.x, endPoint.y);
+            ctx.stroke();
+        }
+        // --- END NEW HELPER ---
         
         function drawMap() {
             if(!dom.canvas.width || !dom.ctx) return; const ctx = dom.ctx;
@@ -509,11 +549,9 @@
             ctx.translate(viewTransform.translateX, viewTransform.translateY);
             ctx.scale(viewTransform.scale, viewTransform.scale);
             
-            // Draw spiral guide
             const systemPositions = Object.values(systems).map(s => parseFloat(s.position)).filter(p => !isNaN(p));
             if(systemPositions.length > 0){ let maxPos=Math.max(...systemPositions); if(maxPos>0){ ctx.strokeStyle='rgba(75,85,99,0.2)';ctx.lineWidth=1/viewTransform.scale;ctx.beginPath();const s=1;ctx.moveTo(0,0);for(let p=s;p<=maxPos*1.1;p+=s)ctx.lineTo(getSpiralPoint(p).x,getSpiralPoint(p).y);ctx.stroke();}}
             
-            // Draw catapult ranges
             if (filterShowCatapults) {
                 Object.values(systems).forEach(sys => { 
                     const sysPos = parseFloat(sys.position);
@@ -534,45 +572,72 @@
                 });
             }
 
-            // Draw wormholes
             if (filterShowWormholes) {
                 ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)'; ctx.lineWidth = 1 / viewTransform.scale; ctx.setLineDash([5 / viewTransform.scale, 5 / viewTransform.scale]);
                 wormholes.forEach(wh => { const sA=systems[wh[0]], sB=systems[wh[1]]; if (sA && sB && typeof sA.x === 'number' && typeof sB.x === 'number') { ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } });
                 ctx.setLineDash([]);
             }
             
-            // Draw path lines
+            // --- MODIFIED: Draw path lines ---
             const calculatedPathIds = new Set(calculatedPathNodes.map(p => p.id));
-            if (calculatedPathNodes.length > 1) {
-                for (let i = 0; i < calculatedPathNodes.length - 1; i++) {
-                    const sA = calculatedPathNodes[i];
-                    const sB = calculatedPathNodes[i + 1];
-                    const posA = parseFloat(sA.position); const posB = parseFloat(sB.position);
+            if (calculatedPathLegs.length > 0) {
+                const nodeMap = new Map(calculatedPathNodes.map(n => [n.id, n]));
 
-                    if (isNaN(posA) || isNaN(posB)) continue; // Skip if positions invalid
+                calculatedPathLegs.forEach(leg => {
+                    const sA = nodeMap.get(leg.from_id);
+                    const sB = nodeMap.get(leg.to_id);
 
-                    const isKnownSystemA = !sA.id.toString().startsWith('virtual');
-                    const isKnownSystemB = !sB.id.toString().startsWith('virtual');
-                    const isWormhole = isKnownSystemA && isKnownSystemB && new Set(wormholes.map(wh => `${Math.min(wh[0],wh[1])}-${Math.max(wh[0],wh[1])}`)).has(`${Math.min(sA.id,sB.id)}-${Math.max(sA.id,sB.id)}`);
-                    const sysAData = systems[sA.id];
-                    const isCatapult = isKnownSystemA && isKnownSystemB && sysAData?.catapult_radius > 0 && Math.abs(posA - posB) <= sysAData.catapult_radius;
+                    if (!sA || !sB) return; 
+                    const posA = parseFloat(sA.position); 
+                    const posB = parseFloat(sB.position);
+                    if (isNaN(posA) || isNaN(posB)) return;
+
+                    if (leg.method === 'wormhole') { 
+                        ctx.strokeStyle='#ef4444'; ctx.lineWidth=3/viewTransform.scale; 
+                        ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); 
                     
-                    if (isWormhole) { ctx.strokeStyle='#ef4444'; ctx.lineWidth=3/viewTransform.scale; ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } 
-                    else if (isCatapult) { ctx.strokeStyle='#a3e635'; ctx.lineWidth=3/viewTransform.scale; ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); } 
-                    else { // Sublight
-                        ctx.strokeStyle='#f59e0b'; ctx.lineWidth=3/viewTransform.scale;
-                        const s=1; ctx.beginPath(); ctx.moveTo(getSpiralPoint(posA).x,getSpiralPoint(posA).y); 
-                        const dist = Math.abs(posB-posA);
-                        const sign = Math.sign(posB-posA);
-                        for (let j=1;j<=Math.floor(dist/s);j++){
-                            const p = posA+(j*s*sign);
-                            ctx.lineTo(getSpiralPoint(p).x, getSpiralPoint(p).y);
-                        } 
-                        ctx.lineTo(getSpiralPoint(posB).x,getSpiralPoint(posB).y);
+                    } else if (leg.method === 'catapult') { 
+                        ctx.strokeStyle='#a3e635'; ctx.lineWidth=3/viewTransform.scale; 
+                        ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); 
+                    
+                    } else if (leg.method === 'catapult_sublight') {
+                        // 1. Get radius
+                        const catapultRadius = systems[sA.id]?.catapult_radius || 0;
+                        
+                        // 2. Calculate virtual node position
+                        const sign = Math.sign(posB - posA);
+                        const virtualNodePos = posA + (sign * catapultRadius);
+
+                        // 3. Get coords
+                        const coordsA = { x: sA.x, y: sA.y };
+                        const coordsV = getSpiralPoint(virtualNodePos);
+
+                        // 4. Draw green catapult line (A -> V)
+                        ctx.strokeStyle = '#a3e635'; // green
+                        ctx.lineWidth = 3 / viewTransform.scale; 
+                        ctx.beginPath(); 
+                        ctx.moveTo(coordsA.x, coordsA.y); 
+                        ctx.lineTo(coordsV.x, coordsV.y); 
                         ctx.stroke();
+
+                        // 5. Draw yellow sublight line (V -> B)
+                        drawSublight(virtualNodePos, posB);
+
+                        // 6. Draw virtual node
+                        ctx.fillStyle = '#f59e0b'; // yellow fill
+                        ctx.strokeStyle = '#1f2937'; // dark border
+                        ctx.lineWidth = 1 / viewTransform.scale;
+                        ctx.beginPath();
+                        ctx.arc(coordsV.x, coordsV.y, 3 / viewTransform.scale, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.stroke();
+                        
+                    } else { // 'sublight'
+                        drawSublight(posA, posB); 
                     }
-                }
+                });
             }
+            // --- END MODIFIED ---
             
             // Draw systems
             Object.values(systems).forEach(sys => {
@@ -712,7 +777,6 @@
         }
 
         function onInteractionMove(e) {
-            // Prevent default only if dragging or multi-touch, allow text selection etc. otherwise
              if (isDragging || (e.touches && e.touches.length > 1)) {
                  e.preventDefault();
              }
@@ -722,7 +786,6 @@
             const worldY = (coords.y - viewTransform.translateY) / viewTransform.scale;
             
             let currentlyHovering = null;
-            // Find closest system within hover radius
             let minDistSq = Math.pow(10 / viewTransform.scale, 2);
             for (const system of Object.values(systems)) {
                 if (typeof system.x !== 'number' || typeof system.y !== 'number') continue;
@@ -735,22 +798,20 @@
             }
             if (hoveredSystem !== currentlyHovering) { hoveredSystem = currentlyHovering; drawMap(); }
 
-            // Handle pinch zoom
             if (e.touches && e.touches.length === 2) {
-                isDragging = false; // Stop panning during pinch
-                clearTimeout(longPressTimer); // Cancel long press if pinching
+                isDragging = false; 
+                clearTimeout(longPressTimer); 
                 const t1 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
                 const t2 = { x: e.touches[1].clientX, y: e.touches[1].clientY };
                 const dist = Math.hypot(t1.x - t2.x, t1.y - t2.y);
                 if (initialTouchDistance) {
                     const scaleFactor = dist / initialTouchDistance;
                     const rect = dom.canvas.getBoundingClientRect();
-                    const midX = (t1.x + t2.x) / 2 - rect.left; // Use rect for accuracy
+                    const midX = (t1.x + t2.x) / 2 - rect.left; 
                     const midY = (t1.y + t2.y) / 2 - rect.top;
                     const worldMidX = (midX - viewTransform.translateX) / viewTransform.scale;
                     const worldMidY = (midY - viewTransform.translateY) / viewTransform.scale;
                     viewTransform.scale *= scaleFactor;
-                    // Clamp scale
                     viewTransform.scale = Math.max(0.05, Math.min(viewTransform.scale, 10)); 
                     viewTransform.translateX = midX - worldMidX * viewTransform.scale;
                     viewTransform.translateY = midY - worldMidY * viewTransform.scale;
@@ -759,14 +820,13 @@
                 initialTouchDistance = dist;
                 return;
             } else {
-                 initialTouchDistance = null; // Reset if not 2 touches
+                 initialTouchDistance = null; 
             }
             
-            // Handle panning (mouse or single touch)
             let cursorStyle = hoveredSystem ? 'pointer' : 'grab';
-            if (isMouseDown && (!e.touches || e.touches.length === 1)) { // Only pan with mouse or 1 touch
+            if (isMouseDown && (!e.touches || e.touches.length === 1)) { 
                 clearTimeout(longPressTimer);
-                if (!isDragging && (Math.hypot(coords.x - dragStartPos.x, coords.y - dragStartPos.y) > 5)) { // Use hypotenuse for drag threshold
+                if (!isDragging && (Math.hypot(coords.x - dragStartPos.x, coords.y - dragStartPos.y) > 5)) { 
                     isDragging = true;
                 }
                 if (isDragging) {
@@ -779,21 +839,21 @@
                     drawMap();
                 }
             }
-            dom.canvas.style.cursor = cursorStyle; // Update cursor style
+            dom.canvas.style.cursor = cursorStyle; 
         }
         
         function onInteractionEnd(e) {
             clearTimeout(longPressTimer);
-            if (!isDragging) { // Only process clicks/taps if not dragging
+            if (!isDragging) { 
                 if (hoveredSystem) {
-                    if (e.shiftKey) { // Shift+Click (Desktop)
+                    if (e.shiftKey) { 
                          if (hoveredSystem.catapult_radius > 0) {
                             const systemId = String(hoveredSystem.id);
                             if (toggledCatapultIds.has(systemId)) { toggledCatapultIds.delete(systemId); } 
                             else { toggledCatapultIds.add(systemId); }
                         }
-                    } else if (activeRouteInput) { // Click/Tap to populate route input
-                        const sysPosStr = systems[hoveredSystem.id]?.position; // Get updated position string
+                    } else if (activeRouteInput) { 
+                        const sysPosStr = systems[hoveredSystem.id]?.position; 
                         if (hoveredSystem.name.startsWith("System ") && sysPosStr) {
                             activeRouteInput.value = `#${sysPosStr}`;
                         } else {
@@ -802,20 +862,19 @@
 
                         if (activeRouteInput === dom.startSystemInput) { dom.endSystemInput.focus(); } 
                         else { dom.routeForm.querySelector('button[type="submit"]').focus(); }
-                        activeRouteInput = null; // Deactivate after populating
+                        activeRouteInput = null; 
                     }
-                    highlightedCatapultSystemId = hoveredSystem.id; // Highlight range on simple click/tap
+                    highlightedCatapultSystemId = hoveredSystem.id; 
                 } else {
-                    highlightedCatapultSystemId = null; // Clear range highlight if clicking empty space
+                    highlightedCatapultSystemId = null; 
                 }
                 drawMap();
             }
-            // Reset interaction state
             isMouseDown = false;
             isDragging = false;
             initialTouchDistance = null;
-            dom.canvas.style.cursor = hoveredSystem ? 'pointer' : 'grab'; // Reset cursor
-            localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform)); // Save view on interaction end
+            dom.canvas.style.cursor = hoveredSystem ? 'pointer' : 'grab'; 
+            localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform)); 
         }
 
         function setupEventListeners() {
@@ -839,13 +898,11 @@
                 const startVal = dom.startSystemInput.value.trim();
                 const endVal = dom.endSystemInput.value.trim();
                 const parseInput = (val) => {
-                    if (!val) return null; // Handle empty input
-                    // Match # followed by digits and optional decimal part
+                    if (!val) return null; 
                     if (val.match(/^#\d+(\.\d+)?$/)) { 
                         const pos = parseFloat(val.substring(1)); 
                         return !isNaN(pos) ? `pos:${pos}` : null; 
                     }
-                    // Find system by name (case-insensitive) OR exact #position match from datalist
                     const system = Object.values(systems).find(s => 
                         (s.name && s.name.toLowerCase() === val.toLowerCase()) || 
                         (s.position && `#${s.position}` === val)
@@ -857,7 +914,8 @@
                 if (startId && endId) { findPath(startId, endId); } 
                 else { 
                     dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Could not find one or both locations. Please use a known system name or format coordinates as #123.45</p>`; 
-                    calculatedPathNodes = []; // Clear old path on error
+                    calculatedPathNodes = []; 
+                    calculatedPathLegs = [];
                     drawMap();
                 }
             });
@@ -869,17 +927,17 @@
                     (s.name && s.name.toLowerCase() === query) || 
                     (s.position && `#${s.position}` === query)
                  );
-                if (foundSystem && typeof foundSystem.x === 'number') { // Check coordinates are valid
-                    viewTransform.scale = 1.5; // Zoom in a bit more
+                if (foundSystem && typeof foundSystem.x === 'number') { 
+                    viewTransform.scale = 1.5; 
                     viewTransform.translateX = (dom.canvas.width / 2) - (foundSystem.x * viewTransform.scale);
                     viewTransform.translateY = (dom.canvas.height / 2) - (foundSystem.y * viewTransform.scale);
                     
                     highlightedSearchSystemId = foundSystem.id;
                     drawMap();
-                    localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform)); // Save view after search
+                    localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform)); 
 
                     setTimeout(() => {
-                        if (highlightedSearchSystemId === foundSystem.id) { // Only clear if it hasn't changed
+                        if (highlightedSearchSystemId === foundSystem.id) { 
                             highlightedSearchSystemId = null;
                             drawMap();
                         }
@@ -893,19 +951,15 @@
             dom.filterWormholes.addEventListener('change', (e) => { filterShowWormholes = e.target.checked; drawMap(); });
             dom.bulkSyncButton.addEventListener('click', handleBulkSync);
 
-            // Activate input field for map clicks
             dom.startSystemInput.addEventListener('focus', () => { activeRouteInput = dom.startSystemInput; });
             dom.endSystemInput.addEventListener('focus', () => { activeRouteInput = dom.endSystemInput; });
-            // Deactivate if clicking outside relevant areas
             document.addEventListener('click', (e) => { if (!dom.routeForm.contains(e.target) && !dom.canvas.contains(e.target)) { activeRouteInput = null; }});
-            // Clear route display button
             dom.routeDetailsContainer.addEventListener('click', (e) => { if (e.target && e.target.id === 'clear-route-button') { clearRouteDisplay(); } });
 
-            // Canvas interaction listeners
             dom.canvas.addEventListener('mousedown', onInteractionStart); 
             dom.canvas.addEventListener('mousemove', onInteractionMove);
             dom.canvas.addEventListener('mouseup', onInteractionEnd); 
-            dom.canvas.addEventListener('mouseleave', onInteractionEnd); // Treat leaving canvas like mouse up
+            dom.canvas.addEventListener('mouseleave', onInteractionEnd); 
             dom.canvas.addEventListener('wheel', (e) => { 
                 e.preventDefault(); 
                 const scaleAmount = 1.1;
@@ -913,23 +967,21 @@
                 const mX=e.clientX - rect.left, mY=e.clientY - rect.top; 
                 const wX=(mX-viewTransform.translateX)/viewTransform.scale, wY=(mY-viewTransform.translateY)/viewTransform.scale; 
                 
-                if(e.deltaY < 0) viewTransform.scale *= scaleAmount; // Zoom in
-                else viewTransform.scale /= scaleAmount; // Zoom out
+                if(e.deltaY < 0) viewTransform.scale *= scaleAmount; 
+                else viewTransform.scale /= scaleAmount; 
                 
-                // Clamp scale
                 viewTransform.scale = Math.max(0.05, Math.min(viewTransform.scale, 10)); 
 
                 viewTransform.translateX=mX-wX*viewTransform.scale; 
                 viewTransform.translateY=mY-wY*viewTransform.scale; 
                 drawMap(); 
                 localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform)); 
-            }, { passive: false }); // Need passive: false to preventDefault()
+            }, { passive: false }); 
             
-            // Touch events
-            dom.canvas.addEventListener('touchstart', onInteractionStart, { passive: false }); // Need passive: false for preventDefault in move
-            dom.canvas.addEventListener('touchmove', onInteractionMove, { passive: false }); // Need passive: false for preventDefault
+            dom.canvas.addEventListener('touchstart', onInteractionStart, { passive: false }); 
+            dom.canvas.addEventListener('touchmove', onInteractionMove, { passive: false }); 
             dom.canvas.addEventListener('touchend', onInteractionEnd);
-            dom.canvas.addEventListener('touchcancel', onInteractionEnd); // Treat cancel like end
+            dom.canvas.addEventListener('touchcancel', onInteractionEnd); 
         }
         
         setupEventListeners();

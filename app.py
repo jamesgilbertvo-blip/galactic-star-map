@@ -973,7 +973,6 @@ def delete_region_effect():
          return jsonify({'error': f'Database error: {e}'}), 500
     finally:
          conn.close()
-# --- END MODIFIED ---
     
 @app.route('/api/systems')
 def get_systems_data():
@@ -1011,7 +1010,7 @@ def calculate_path():
     penalty_multiplier = 100 # Define the penalty multiplier
     
     if not start_input or not end_input: return jsonify({'error': 'start_id and end_id are required'}), 400
-    conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
+    conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?';
     user_faction_id = session.get('faction_id')
     relationships = {}
     if user_faction_id:
@@ -1101,8 +1100,7 @@ def calculate_path():
 
             id_pair = tuple(sorted((current_id, neighbor_id)))
             
-            # --- NEW CATAPULT LOGIC ---
-            # Check Catapult (cost 0 or partial cost, overrides sublight if cheaper)
+            # --- MODIFIED CATAPULT LOGIC ---
             catapult_radius = current_sys.get('radius', 0)
             if catapult_radius > 0:
                 owner = current_sys.get('owner')
@@ -1111,14 +1109,14 @@ def calculate_path():
                 if is_allowed:
                     if sublight_dist <= catapult_radius:
                         # Full jump is covered
-                        if 0 < cost: # Only take if cheaper than current cost (e.g., penalized sublight)
+                        if 0 < cost: 
                             cost, method = 0, 'catapult'
                     else:
                         # Partial jump is covered
                         partial_cost = sublight_dist - catapult_radius
-                        if partial_cost < cost: # Only take if cheaper than current cost
-                            cost, method = partial_cost, 'catapult'
-            # --- END NEW CATAPULT LOGIC ---
+                        if partial_cost < cost: 
+                            cost, method = partial_cost, 'catapult_sublight' # <-- NEW METHOD
+            # --- END MODIFIED CATAPULT LOGIC ---
 
             # Check Wormhole (cost 0, overrides sublight/catapult if cheaper)
             if id_pair in wormhole_pairs:
