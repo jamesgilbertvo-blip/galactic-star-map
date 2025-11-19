@@ -212,6 +212,13 @@ def bulk_add_systems(systems_list, faction_id, cursor, pg_compat, param):
             sys_id_int = int(sys_id)
             # Use Decimal for position
             sys_pos_decimal = decimal.Decimal(sys_pos_str)
+            
+            # --- PRIORITY 1: Block negative positions ---
+            if sys_pos_decimal < 0:
+                print(f"Skipping system {sys_id_int} (bulk/nearby) due to negative position {sys_pos_decimal}.", file=sys.stderr)
+                continue 
+            # --- END PRIORITY 1 ---
+
             sys_name = system_data.get('system_name') or f"System {sys_id_int}"
             x, y = get_spiral_coords(sys_pos_decimal) # Pass Decimal here
             
@@ -240,6 +247,7 @@ def bulk_add_systems(systems_list, faction_id, cursor, pg_compat, param):
     return len(links_to_insert)
 
 # --- ROUTES ---
+# --- MODIFIED: /api/sync with Priority 1 Check ---
 @app.route('/api/sync', methods=['POST'])
 def sync_data():
     if 'user_id' not in session or session.get('is_developer'): return jsonify({'error': 'Not authenticated or developer accounts cannot sync'}), 401
@@ -340,18 +348,34 @@ def sync_data():
         
         for sys_id_str, sys_info in current_system_data['system'].items(): 
             try:
-                current_system_id = int(sys_id_str) 
-                current_sys_details = sys_info
-                current_sys_pos_str = sys_info.get('system_position')
-                region_name = sys_info.get('region_name')
-                region_effect_name = sys_info.get('region_effect_name')
+                current_system_id_temp = int(sys_id_str) 
+                current_sys_details_temp = sys_info
+                current_sys_pos_str_temp = sys_info.get('system_position')
                 
-                if current_sys_pos_str is None:
-                     print(f"Warning: Current system {current_system_id} missing position data.", file=sys.stderr)
+                if current_sys_pos_str_temp is None:
+                     print(f"Warning: Current system {current_system_id_temp} missing position data.", file=sys.stderr)
                      continue # Skip if position is missing
 
                 # Use Decimal for position
-                current_sys_pos_decimal = decimal.Decimal(current_sys_pos_str)
+                current_sys_pos_decimal_temp = decimal.Decimal(current_sys_pos_str_temp)
+
+                # --- PRIORITY 1: Block sync if current system is negative ---
+                if current_sys_pos_decimal_temp < 0:
+                     print(f"Blocking sync: User is in negative-position system {current_system_id_temp} ({current_sys_pos_decimal_temp}).", file=sys.stderr)
+                     conn.rollback() # Rollback faction updates
+                     conn.close()
+                     return jsonify({'message': f'Sync blocked: You are in a restricted sector (position {current_sys_pos_decimal_temp} < 0). Please move to normal space and try again.'}), 400
+                # --- END PRIORITY 1 ---
+
+                # If we get here, position is valid
+                current_system_id = current_system_id_temp
+                current_sys_details = current_sys_details_temp
+                current_sys_pos_str = current_sys_pos_str_temp
+                current_sys_pos_decimal = current_sys_pos_decimal_temp
+                
+                region_name = sys_info.get('region_name')
+                region_effect_name = sys_info.get('region_effect_name')
+                
                 x, y = get_spiral_coords(current_sys_pos_decimal)
                 
                 # Insert/Update current system in systems table
@@ -502,6 +526,7 @@ def sync_data():
         return jsonify({'error': f'An internal error occurred during sync: {e}'}), 500
     finally:
         if conn: conn.close()
+# --- END MODIFIED ---
         
 @app.route('/register', methods=['POST'])
 def register():
@@ -973,6 +998,7 @@ def delete_region_effect():
          return jsonify({'error': f'Database error: {e}'}), 500
     finally:
          conn.close()
+# --- END MODIFIED ---
     
 @app.route('/api/systems')
 def get_systems_data():
