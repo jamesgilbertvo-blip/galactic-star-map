@@ -402,7 +402,31 @@
             dom.endSystemInput.value = '';
             
             if (calculatedPathLegs.length > 0 && result.distance != null) {
-                let html = `<div class="flex justify-between items-center"><h2 class="text-lg font-semibold text-white">Route: ${startInputVal} to ${endInputVal}</h2><button id="clear-route-button" class="text-sm text-gray-400 hover:text-white focus:outline-none">&times; Clear</button></div><p class="text-sm text-gray-400">Total Distance: ${result.distance.toFixed(2)}</p><ol class="mt-2 space-y-2 text-sm max-h-60 overflow-y-auto pr-2">`;
+                // --- MODIFIED: Calculate counts for summary ---
+                const counts = { sublight: 0, catapult: 0, catapult_sublight: 0, wormhole: 0 };
+                calculatedPathLegs.forEach(leg => {
+                    if (counts[leg.method] !== undefined) {
+                        counts[leg.method]++;
+                    } else {
+                         // Handle edge case if method name changes later
+                        counts.sublight++; 
+                    }
+                });
+
+                // Build summary string
+                const summaryParts = [];
+                if (counts.catapult > 0) summaryParts.push(`${counts.catapult} Catapult`);
+                if (counts.catapult_sublight > 0) summaryParts.push(`${counts.catapult_sublight} Catapult+Sublight`);
+                if (counts.wormhole > 0) summaryParts.push(`${counts.wormhole} Wormhole`);
+                if (counts.sublight > 0) summaryParts.push(`${counts.sublight} Sublight`);
+                
+                const summaryString = `<strong>Total Jumps: ${calculatedPathLegs.length}</strong> (${summaryParts.join(', ')})`;
+                // --- END MODIFIED ---
+
+                let html = `<div class="flex justify-between items-center"><h2 class="text-lg font-semibold text-white">Route: ${startInputVal} to ${endInputVal}</h2><button id="clear-route-button" class="text-sm text-gray-400 hover:text-white focus:outline-none">&times; Clear</button></div>`;
+                html += `<p class="text-sm text-gray-400">Total Distance: ${result.distance.toFixed(2)}</p>`;
+                html += `<p class="text-xs text-gray-500 mb-2">${summaryString}</p>`; // Add summary here
+                html += `<ol class="mt-2 space-y-2 text-sm max-h-60 overflow-y-auto pr-2">`;
                 
                 const getDisplayName = (node) => {
                     if (!node) return 'Unknown';
@@ -415,10 +439,9 @@
                 const startNode = allNodes[calculatedPathLegs[0].from_id];
                 html += `<li class="text-gray-300">1. Start at: <span class="font-semibold text-white">${getDisplayName(startNode)}</span></li>`;
                 
-                // --- MODIFIED: displayPathResults loop ---
                 calculatedPathLegs.forEach((leg, index) => { 
                     let travelMethod = leg.method.charAt(0).toUpperCase() + leg.method.slice(1); 
-                    let color = 'text-amber-400'; // Default sublight
+                    let color = 'text-amber-400'; 
                     
                     if (leg.method === 'wormhole') {
                         color = 'text-red-400'; 
@@ -426,13 +449,12 @@
                     } else if (leg.method === 'catapult') {
                         color = 'text-lime-400'; 
                         travelMethod = 'Catapult';
-                    } else if (leg.method === 'catapult_sublight') { // NEW
-                        color = 'text-lime-400'; // Still green, but with new text
+                    } else if (leg.method === 'catapult_sublight') { 
+                        color = 'text-lime-400'; 
                         travelMethod = 'Catapult + Sublight';
                     } else {
                         travelMethod = 'Sublight';
                     }
-                    // --- END MODIFIED ---
 
                     const toNode = allNodes[leg.to_id];
                     html += `<li class="text-gray-300">${index + 2}. <span class="font-semibold ${color}">${travelMethod}</span> to <span class="font-semibold text-white">${getDisplayName(toNode)}</span></li>`; 
@@ -515,13 +537,12 @@
         function fitMapToView() { if (Object.keys(systems).length === 0) return; let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity; Object.values(systems).forEach(s => { if (typeof s.x === 'number' && typeof s.y === 'number'){ minX=Math.min(minX,s.x); maxX=Math.max(maxX,s.x); minY=Math.min(minY,s.y); maxY=Math.max(maxY,s.y); }}); if (!isFinite(minX)) return; const mapW=maxX-minX || 1, mapH=maxY-minY || 1; const mapCX=minX+mapW/2, mapCY=minY+mapH/2; const scale=Math.min(dom.canvas.width/(mapW*1.2), dom.canvas.height/(mapH*1.2))||1; viewTransform = { scale, translateX: (dom.canvas.width/2)-(mapCX*scale), translateY: (dom.canvas.height/2)-(mapCY*scale) }; localStorage.setItem('mapViewTransform', JSON.stringify(viewTransform));}
         const getSpiralPoint = (pos) => { const a=SPIRAL_TIGHTNESS, r=parseFloat(pos)*SPIRAL_SCALE/1000; return { x: r*Math.cos(parseFloat(pos)*a), y: r*Math.sin(parseFloat(pos)*a) }; }; 
 
-        // --- NEW: Helper function to draw sublight spiral ---
         function drawSublight(posA, posB) {
             if (isNaN(posA) || isNaN(posB)) return;
-            const ctx = dom.ctx; // Get context
-            ctx.strokeStyle = '#f59e0b'; // yellow
+            const ctx = dom.ctx; 
+            ctx.strokeStyle = '#f59e0b'; 
             ctx.lineWidth = 3 / viewTransform.scale;
-            const s = 1; // Step
+            const s = 1; 
             ctx.beginPath(); 
             
             const startPoint = getSpiralPoint(posA);
@@ -539,7 +560,6 @@
             ctx.lineTo(endPoint.x, endPoint.y);
             ctx.stroke();
         }
-        // --- END NEW HELPER ---
         
         function drawMap() {
             if(!dom.canvas.width || !dom.ctx) return; const ctx = dom.ctx;
@@ -550,7 +570,44 @@
             ctx.scale(viewTransform.scale, viewTransform.scale);
             
             const systemPositions = Object.values(systems).map(s => parseFloat(s.position)).filter(p => !isNaN(p));
-            if(systemPositions.length > 0){ let maxPos=Math.max(...systemPositions); if(maxPos>0){ ctx.strokeStyle='rgba(75,85,99,0.2)';ctx.lineWidth=1/viewTransform.scale;ctx.beginPath();const s=1;ctx.moveTo(0,0);for(let p=s;p<=maxPos*1.1;p+=s)ctx.lineTo(getSpiralPoint(p).x,getSpiralPoint(p).y);ctx.stroke();}}
+            const maxPos = systemPositions.length > 0 ? Math.max(...systemPositions) : 0;
+            
+            // Draw spiral guide
+            if(maxPos > 0){ 
+                ctx.strokeStyle='rgba(75,85,99,0.2)';
+                ctx.lineWidth=1/viewTransform.scale;
+                ctx.beginPath();
+                const s=1;
+                ctx.moveTo(0,0);
+                for(let p=s; p<=maxPos*1.1; p+=s) ctx.lineTo(getSpiralPoint(p).x, getSpiralPoint(p).y);
+                ctx.stroke();
+            }
+            
+            // --- MODIFIED: Draw Region Boundary Tick Marks ---
+            // Draw tick marks every 50 units
+            if (maxPos > 50) {
+                 ctx.lineWidth = 1 / viewTransform.scale;
+                 ctx.strokeStyle = 'rgba(156, 163, 175, 0.4)'; // light gray, faint
+                 const tickSize = 4 / viewTransform.scale; // Length of tick on each side
+                 
+                 for (let p = 50; p <= maxPos * 1.1; p += 50) {
+                     const p1 = getSpiralPoint(p);
+                     // Calculate approximation of tangent vector by looking slightly ahead
+                     const p2 = getSpiralPoint(p + 0.1); 
+                     const dx = p2.x - p1.x;
+                     const dy = p2.y - p1.y;
+                     const angle = Math.atan2(dy, dx);
+                     
+                     // Draw perpendicular line
+                     ctx.beginPath();
+                     // -sin, cos is 90 degree rotation
+                     ctx.moveTo(p1.x - tickSize * Math.sin(angle), p1.y + tickSize * Math.cos(angle));
+                     ctx.lineTo(p1.x + tickSize * Math.sin(angle), p1.y - tickSize * Math.cos(angle));
+                     ctx.stroke();
+                 }
+            }
+            // --- END MODIFIED ---
+
             
             if (filterShowCatapults) {
                 Object.values(systems).forEach(sys => { 
@@ -578,7 +635,6 @@
                 ctx.setLineDash([]);
             }
             
-            // --- MODIFIED: Draw path lines ---
             const calculatedPathIds = new Set(calculatedPathNodes.map(p => p.id));
             if (calculatedPathLegs.length > 0) {
                 const nodeMap = new Map(calculatedPathNodes.map(n => [n.id, n]));
@@ -601,45 +657,36 @@
                         ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); 
                     
                     } else if (leg.method === 'catapult_sublight') {
-                        // 1. Get radius
                         const catapultRadius = systems[sA.id]?.catapult_radius || 0;
-                        
-                        // 2. Calculate virtual node position
                         const sign = Math.sign(posB - posA);
                         const virtualNodePos = posA + (sign * catapultRadius);
 
-                        // 3. Get coords
                         const coordsA = { x: sA.x, y: sA.y };
                         const coordsV = getSpiralPoint(virtualNodePos);
 
-                        // 4. Draw green catapult line (A -> V)
-                        ctx.strokeStyle = '#a3e635'; // green
+                        ctx.strokeStyle = '#a3e635'; 
                         ctx.lineWidth = 3 / viewTransform.scale; 
                         ctx.beginPath(); 
                         ctx.moveTo(coordsA.x, coordsA.y); 
                         ctx.lineTo(coordsV.x, coordsV.y); 
                         ctx.stroke();
 
-                        // 5. Draw yellow sublight line (V -> B)
                         drawSublight(virtualNodePos, posB);
 
-                        // 6. Draw virtual node
-                        ctx.fillStyle = '#f59e0b'; // yellow fill
-                        ctx.strokeStyle = '#1f2937'; // dark border
+                        ctx.fillStyle = '#f59e0b'; 
+                        ctx.strokeStyle = '#1f2937'; 
                         ctx.lineWidth = 1 / viewTransform.scale;
                         ctx.beginPath();
                         ctx.arc(coordsV.x, coordsV.y, 3 / viewTransform.scale, 0, Math.PI * 2);
                         ctx.fill();
                         ctx.stroke();
                         
-                    } else { // 'sublight'
+                    } else { 
                         drawSublight(posA, posB); 
                     }
                 });
             }
-            // --- END MODIFIED ---
             
-            // Draw systems
             Object.values(systems).forEach(sys => {
                 if (typeof sys.x !== 'number' || typeof sys.y !== 'number') { return; }
                 const isOnPath = calculatedPathIds.has(String(sys.id));
@@ -659,7 +706,6 @@
                 }
             });
 
-            // Draw virtual path nodes
             calculatedPathNodes.forEach(node => {
                 if (node.id.toString().startsWith('virtual')) {
                     const size = 8 / viewTransform.scale;
@@ -671,7 +717,6 @@
                 }
             });
 
-            // Draw labels
             Object.values(systems).forEach(sys => {
                 if (typeof sys.x !== 'number' || typeof sys.y !== 'number') return;
                 const isOnPath = calculatedPathIds.has(String(sys.id));
@@ -683,7 +728,7 @@
                 if (isDefaultName && typeof sys.position === 'string' && sys.position !== '') { 
                     labelText = `#${sys.position}`; 
                 } else if (!labelText) {
-                    labelText = `ID: ${sys.id}`; // Fallback if name is missing
+                    labelText = `ID: ${sys.id}`; 
                 }
 
                 let shouldShowLabel = (isOnPath || isHovered || isSearched || viewTransform.scale > 0.8);
@@ -699,7 +744,6 @@
                 }
             });
 
-            // Draw virtual node labels
             calculatedPathNodes.forEach(node => {
                 if (node.id.toString().startsWith('virtual')) {
                     const size = 8 / viewTransform.scale;
@@ -710,15 +754,14 @@
                 }
             });
 
-            // Draw the ping animation
             if (pingAnimation && systems[pingAnimation.systemId]) {
                 const sys = systems[pingAnimation.systemId];
-                if (typeof sys.x === 'number' && typeof sys.y === 'number') { // Check if system coords are valid
+                if (typeof sys.x === 'number' && typeof sys.y === 'number') { 
                     const elapsed = Date.now() - pingAnimation.startTime;
                     const progress = elapsed / pingAnimation.duration; 
                     
                     const maxRadius = (Math.max(dom.canvas.width, dom.canvas.height) / 2) / viewTransform.scale;
-                    const currentRadius = Math.max(0, maxRadius * (1 - progress)); // Ensure radius doesn't go negative
+                    const currentRadius = Math.max(0, maxRadius * (1 - progress)); 
                     const currentAlpha = Math.max(0, 1 - (progress * 0.8)); 
                     
                     if (currentRadius > 0 && currentAlpha > 0) { 
