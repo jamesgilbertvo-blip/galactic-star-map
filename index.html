@@ -585,27 +585,27 @@
             
             // --- MODIFIED: Draw Region Boundary Tick Marks ---
             // Draw tick marks every 50 units
-            if (maxPos > 50) {
-                 ctx.lineWidth = 1 / viewTransform.scale;
-                 ctx.strokeStyle = 'rgba(156, 163, 175, 0.4)'; // light gray, faint
-                 const tickSize = 4 / viewTransform.scale; // Length of tick on each side
+            //if (maxPos > 50) {
+              //   ctx.lineWidth = 1 / viewTransform.scale;
+               //  ctx.strokeStyle = 'rgba(156, 163, 175, 0.4)'; // light gray, faint
+               //  const tickSize = 4 / viewTransform.scale; // Length of tick on each side
                  
-                 for (let p = 50; p <= maxPos * 1.1; p += 50) {
-                     const p1 = getSpiralPoint(p);
+               //  for (let p = 50; p <= maxPos * 1.1; p += 50) {
+               //      const p1 = getSpiralPoint(p);
                      // Calculate approximation of tangent vector by looking slightly ahead
-                     const p2 = getSpiralPoint(p + 0.1); 
-                     const dx = p2.x - p1.x;
-                     const dy = p2.y - p1.y;
-                     const angle = Math.atan2(dy, dx);
+               //      const p2 = getSpiralPoint(p + 0.1); 
+               //      const dx = p2.x - p1.x;
+               //      const dy = p2.y - p1.y;
+               //      const angle = Math.atan2(dy, dx);
                      
                      // Draw perpendicular line
-                     ctx.beginPath();
+                //     ctx.beginPath();
                      // -sin, cos is 90 degree rotation
-                     ctx.moveTo(p1.x - tickSize * Math.sin(angle), p1.y + tickSize * Math.cos(angle));
-                     ctx.lineTo(p1.x + tickSize * Math.sin(angle), p1.y - tickSize * Math.cos(angle));
-                     ctx.stroke();
-                 }
-            }
+                //     ctx.moveTo(p1.x - tickSize * Math.sin(angle), p1.y + tickSize * Math.cos(angle));
+                //     ctx.lineTo(p1.x + tickSize * Math.sin(angle), p1.y - tickSize * Math.cos(angle));
+                //     ctx.stroke();
+               //  }
+           // }
             // --- END MODIFIED ---
 
             
