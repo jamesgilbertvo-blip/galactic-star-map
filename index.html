@@ -57,7 +57,7 @@
 <body class="h-screen antialiased overflow-hidden relative">
 
     <div id="intel-context-menu" class="hidden bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-4 flex-col space-y-3">
-        <h3 class="text-sm font-bold text-white border-b border-gray-700 pb-2">Add Intel Marker</h3>
+        <h3 id="intel-menu-title" class="text-sm font-bold text-white border-b border-gray-700 pb-2">Add Intel Marker</h3>
         <div class="text-xs text-gray-400" id="intel-coords-display"></div>
         <select id="intel-type-input" class="bg-gray-700 border border-gray-600 rounded text-white text-sm p-2">
             <option value="Mining Rich">Mining Rich</option>
@@ -65,9 +65,12 @@
             <option value="Point of Interest">Point of Interest</option>
         </select>
         <textarea id="intel-note-input" placeholder="Optional notes..." class="bg-gray-700 border border-gray-600 rounded text-white text-sm p-2 h-16 resize-none"></textarea>
-        <div class="flex justify-end space-x-2">
-            <button id="cancel-intel-btn" class="px-3 py-1 text-xs text-gray-300 hover:text-white">Cancel</button>
-            <button id="save-intel-btn" class="px-3 py-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded">Save</button>
+        <div class="flex justify-between pt-2">
+             <button id="delete-intel-btn" class="hidden px-3 py-1 text-xs bg-red-600 hover:bg-red-700 text-white rounded">Delete</button>
+            <div class="flex space-x-2 ml-auto">
+                <button id="cancel-intel-btn" class="px-3 py-1 text-xs text-gray-300 hover:text-white">Cancel</button>
+                <button id="save-intel-btn" class="px-3 py-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded">Save</button>
+            </div>
         </div>
     </div>
 
@@ -137,7 +140,6 @@
                     <button id="sync-button" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md">Sync Map Data</button>
                     <p id="sync-status" class="text-sm text-center text-gray-400 mt-2 h-4" aria-live="assertive"></p>
                 </div>
-                
                 <form id="route-form" class="space-y-4">
                     <div class="relative">
                         <label class="block text-xs text-gray-500 mb-1">Start</label>
@@ -197,7 +199,7 @@
                         <input id="toggle-unclaimed-names" type="checkbox" class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
                         <label for="toggle-unclaimed-names" class="ml-2 block text-sm text-gray-300">Show Unclaimed Names</label>
                     </div>
-                    <p class="text-xs text-gray-500">Click to select system. Right-Click/Long-Press for Intel. Shift+Click to toggle range.</p>
+                    <p class="text-xs text-gray-500">Click to select. Right-Click/Long-Press for Intel. Shift+Click to toggle range.</p>
                     <button id="reset-view-button" class="mt-2 w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-md text-sm">Reset View</button>
                 </div>
             </div>
@@ -239,10 +241,11 @@
         let pingAnimation = null; 
         let isAnimatingPing = false; 
         let pingAnimationFrameId = null;
-
+        
         // Intel State
         let intelMarkers = [];
         let pendingIntelCoords = null; 
+        // --- END ---
 
         const dom = { 
             loginView: document.getElementById('login-view'), mapView: document.getElementById('map-view'), registerView: document.getElementById('register-view'), 
@@ -272,11 +275,13 @@
             centerMeButton: document.getElementById('center-me-button'),
             // Intel Context Menu DOM
             intelContextMenu: document.getElementById('intel-context-menu'),
+            intelMenuTitle: document.getElementById('intel-menu-title'),
             intelCoordsDisplay: document.getElementById('intel-coords-display'),
             intelTypeInput: document.getElementById('intel-type-input'),
             intelNoteInput: document.getElementById('intel-note-input'),
             cancelIntelBtn: document.getElementById('cancel-intel-btn'),
-            saveIntelBtn: document.getElementById('save-intel-btn')
+            saveIntelBtn: document.getElementById('save-intel-btn'),
+            deleteIntelBtn: document.getElementById('delete-intel-btn')
         };
 
         const apiFetch = (url, options = {}) => { options.credentials = 'include'; return fetch(url, options); };
@@ -363,6 +368,7 @@
         
         async function fetchMapData(shouldFit = true, oldSystemIds = null) { 
             try {
+                // Parallel fetch
                 const [systemsRes, intelRes] = await Promise.all([
                     apiFetch('/api/systems'),
                     apiFetch('/api/intel')
@@ -401,7 +407,6 @@
             } catch (e) { console.error("Failed to fetch or draw map data:", e); } 
         }
         
-        // --- Added back addWaypointInput ---
         function addWaypointInput() {
             const container = dom.waypointsContainer;
             const div = document.createElement('div');
@@ -424,16 +429,13 @@
             div.appendChild(removeBtn);
             container.appendChild(div);
             
-            // Attach focus listener
             input.addEventListener('focus', () => { activeRouteInput = input; });
         }
 
-        // --- Restored Multi-Stop findPath ---
         async function findPath() {
             const startVal = dom.startSystemInput.value.trim();
             const endVal = dom.endSystemInput.value.trim();
             
-            // Gather waypoint values
             const waypoints = [];
             dom.waypointsContainer.querySelectorAll('input').forEach(input => {
                 const val = input.value.trim();
@@ -468,7 +470,6 @@
                      return system ? `sys:${system.id}` : null;
                 };
 
-                // Create pairs
                 const requests = [];
                 for (let i = 0; i < routeStops.length - 1; i++) {
                     const sId = parseInput(routeStops[i]);
@@ -488,7 +489,6 @@
                     }));
                 }
 
-                // Execute parallel requests
                 const responses = await Promise.all(requests);
                 
                 for (const r of responses) {
@@ -748,7 +748,6 @@
                     const sysPos = parseFloat(sys.position);
                     const sysRadius = parseFloat(sys.catapult_radius);
                     if (isNaN(sysPos) || isNaN(sysRadius) || sysRadius <= 0) return;
-                    
                     const isToggled = toggledCatapultIds.has(String(sys.id));
                     if (!isToggled) { 
                         let rangeColor = 'rgba(132, 204, 22, 0.3)';
@@ -822,7 +821,6 @@
                 ctx.beginPath();
                 ctx.arc(sys.x, sys.y, (isOnPath || isHovered || isSearched ? 6 : 4) / viewTransform.scale, 0, Math.PI * 2);
                 ctx.fill();
-
                 if (isNewlySynced) {
                     ctx.strokeStyle = 'rgba(250, 204, 21, 0.9)';
                     ctx.lineWidth = 3 / viewTransform.scale;
@@ -939,30 +937,70 @@
             ctx.restore();
         }
 
-        function openContextMenu(x, y, worldX, worldY) {
+        // --- NEW: Context Menu Logic ---
+        function openContextMenu(x, y, worldX, worldY, existingMarker = null) {
             dom.intelContextMenu.classList.add('hidden');
-            dom.intelContextMenu.style.left = `${x}px`;
-            dom.intelContextMenu.style.top = `${y}px`;
-            dom.pendingIntelCoords = { x: worldX, y: worldY };
             
-            let nearestSys = null;
-            let nearestDist = Infinity;
-            Object.values(systems).forEach(s => {
-                const dx = worldX - s.x;
-                const dy = worldY - s.y;
-                const dist = Math.sqrt(dx*dx + dy*dy);
-                if(dist < nearestDist) { nearestDist = dist; nearestSys = s; }
-            });
+            // Keep menu on screen
+            const menuWidth = 200;
+            const menuHeight = 250;
+            const screenW = window.innerWidth;
+            const screenH = window.innerHeight;
             
-            let coordText = `Coordinates: ${worldX.toFixed(0)}, ${worldY.toFixed(0)}`;
-            if (nearestSys && nearestDist < (10 / viewTransform.scale)) {
-                dom.pendingIntelCoords.system_id = nearestSys.id;
-                coordText += ` (Near ${nearestSys.name})`;
+            let left = x;
+            let top = y;
+            
+            if (left + menuWidth > screenW) left = screenW - menuWidth - 10;
+            if (top + menuHeight > screenH) top = screenH - menuHeight - 10;
+
+            dom.intelContextMenu.style.left = `${left}px`;
+            dom.intelContextMenu.style.top = `${top}px`;
+            
+            if (existingMarker) {
+                // VIEW/DELETE MODE
+                dom.pendingIntelCoords = existingMarker; // Store the full object
+                document.getElementById('intel-menu-title').textContent = "Intel Details";
+                dom.intelTypeInput.value = existingMarker.type;
+                dom.intelTypeInput.disabled = true;
+                dom.intelNoteInput.value = existingMarker.note || "";
+                dom.intelNoteInput.disabled = true; // Read-only
+                
+                dom.intelCoordsDisplay.textContent = `Coordinates: ${existingMarker.x.toFixed(0)}, ${existingMarker.y.toFixed(0)}`;
+                
+                dom.deleteIntelBtn.classList.remove('hidden'); // Show Delete
+                dom.saveIntelBtn.classList.add('hidden');      // Hide Save
+                
             } else {
-                delete dom.pendingIntelCoords.system_id;
+                // ADD MODE
+                dom.pendingIntelCoords = { x: worldX, y: worldY };
+                document.getElementById('intel-menu-title').textContent = "Add Intel Marker";
+                dom.intelTypeInput.disabled = false;
+                dom.intelNoteInput.disabled = false;
+                
+                // Try to find nearest system for context
+                let nearestSys = null;
+                let nearestDist = Infinity;
+                Object.values(systems).forEach(s => {
+                    const dx = worldX - s.x;
+                    const dy = worldY - s.y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    if(dist < nearestDist) { nearestDist = dist; nearestSys = s; }
+                });
+                
+                let coordText = `Coordinates: ${worldX.toFixed(0)}, ${worldY.toFixed(0)}`;
+                if (nearestSys && nearestDist < (10 / viewTransform.scale)) {
+                    dom.pendingIntelCoords.system_id = nearestSys.id;
+                    coordText += ` (Near ${nearestSys.name})`;
+                } else {
+                    delete dom.pendingIntelCoords.system_id;
+                }
+                dom.intelCoordsDisplay.textContent = coordText;
+                dom.intelNoteInput.value = ''; 
+                
+                dom.deleteIntelBtn.classList.add('hidden'); // Hide Delete
+                dom.saveIntelBtn.classList.remove('hidden'); // Show Save
             }
-            dom.intelCoordsDisplay.textContent = coordText;
-            dom.intelNoteInput.value = ''; 
+            
             dom.intelContextMenu.classList.remove('hidden');
         }
         
@@ -998,9 +1036,34 @@
                 console.error("Error saving intel:", e);
             }
         }
+
+        // --- NEW: Delete Function ---
+        async function deleteIntelMarker() {
+            if (!dom.pendingIntelCoords || !dom.pendingIntelCoords.id) return;
+            if (!confirm("Are you sure you want to delete this marker?")) return;
+
+            try {
+                const r = await apiFetch('/api/intel', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: dom.pendingIntelCoords.id })
+                });
+
+                if (r.ok) {
+                    closeContextMenu();
+                    fetchMapData(false);
+                } else {
+                    const d = await r.json();
+                    alert("Failed to delete: " + (d.error || "Unknown error"));
+                }
+            } catch (e) {
+                console.error("Error deleting intel:", e);
+            }
+        }
         
         dom.cancelIntelBtn.addEventListener('click', closeContextMenu);
         dom.saveIntelBtn.addEventListener('click', saveIntelMarker);
+        dom.deleteIntelBtn.addEventListener('click', deleteIntelMarker);
 
         function handleToggleUnclaimedNames(e) { showUnclaimedNames = e.target.checked; drawMap(); }
         function handleResetView() { fitMapToView(); drawMap(); }
@@ -1026,15 +1089,28 @@
             clearTimeout(longPressTimer);
             longPressTimer = setTimeout(() => {
                 if (!isDragging) {
+                    // Check for system range toggle first
                     if (hoveredSystem && hoveredSystem.catapult_radius > 0) {
                         const systemId = String(hoveredSystem.id);
                         if (toggledCatapultIds.has(systemId)) { toggledCatapultIds.delete(systemId); } 
                         else { toggledCatapultIds.add(systemId); }
                         drawMap();
                     } else {
+                         // Long Press for Context Menu
                          const worldX = (coords.x - viewTransform.translateX) / viewTransform.scale;
                          const worldY = (coords.y - viewTransform.translateY) / viewTransform.scale;
-                         openContextMenu(coords.x, coords.y, worldX, worldY);
+                         
+                         // Check if clicked on existing marker
+                         let clickedMarker = null;
+                         for (const marker of intelMarkers) {
+                             const dx = worldX - marker.x;
+                             const dy = worldY - marker.y;
+                             if (Math.sqrt(dx*dx + dy*dy) < (15 / viewTransform.scale)) { // Hitbox
+                                 clickedMarker = marker;
+                                 break;
+                             }
+                         }
+                         openContextMenu(coords.x, coords.y, worldX, worldY, clickedMarker);
                     }
                 }
             }, 500);
@@ -1235,7 +1311,18 @@
                 const worldX = (x - viewTransform.translateX) / viewTransform.scale;
                 const worldY = (y - viewTransform.translateY) / viewTransform.scale;
                 
-                openContextMenu(e.clientX, e.clientY, worldX, worldY);
+                // Check if clicked on existing marker
+                let clickedMarker = null;
+                for (const marker of intelMarkers) {
+                    const dx = worldX - marker.x;
+                    const dy = worldY - marker.y;
+                    // Check hit radius (slightly larger than drawn size for easier clicking)
+                    if (Math.sqrt(dx*dx + dy*dy) < (15 / viewTransform.scale)) {
+                        clickedMarker = marker;
+                        break;
+                    }
+                }
+                openContextMenu(e.clientX, e.clientY, worldX, worldY, clickedMarker);
             });
         }
         
