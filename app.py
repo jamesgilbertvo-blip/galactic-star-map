@@ -61,6 +61,7 @@ def setup_database_if_needed():
     try:
         user_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
         faction_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
+        intel_id_type = 'SERIAL PRIMARY KEY' if pg_compat else 'INTEGER PRIMARY KEY AUTOINCREMENT'
 
         cursor.execute(f'CREATE TABLE IF NOT EXISTS factions (id {faction_id_type}, name TEXT UNIQUE NOT NULL, initial_import_done BOOLEAN DEFAULT FALSE NOT NULL)')
         cursor.execute(f'''
@@ -96,6 +97,21 @@ def setup_database_if_needed():
             region_name TEXT PRIMARY KEY,
             effect_name TEXT NOT NULL
         )''')
+        
+        # --- NEW: Intel Markers Table ---
+        cursor.execute(f'''
+        CREATE TABLE IF NOT EXISTS faction_intel (
+            id {intel_id_type},
+            faction_id INTEGER NOT NULL REFERENCES factions(id),
+            system_id INTEGER REFERENCES systems(id),
+            x REAL NOT NULL,
+            y REAL NOT NULL,
+            type TEXT NOT NULL,
+            note TEXT,
+            created_by_user_id INTEGER REFERENCES users(id)
+        )''')
+        # --- END NEW ---
+
         conn.commit()
         print("Core table existence check complete.")
 
@@ -161,6 +177,7 @@ def setup_database_if_needed():
 
     conn.close()
     print("Database setup and migration check complete.")
+# --- END MODIFIED ---
 
 
 # --- Admin Decorator & Utilities ---
@@ -403,9 +420,7 @@ def sync_data():
                  continue
 
         if not current_system_id or current_sys_details is None or current_sys_pos_decimal is None:
-              # This will be hit if the only system in the API call was negative and was skipped
-              print("Sync failed: No valid current system could be processed.", file=sys.stderr)
-              return jsonify({'message': 'Could not process current system data. It might have an invalid position.'}), 500
+              return jsonify({'message': 'Could not process current system data from API response.'}), 500
 
         # Now handle other discovered systems
         all_nearby_systems = {} # system_id -> {system_id, system_name, system_position}
@@ -1025,6 +1040,67 @@ def get_systems_data():
     conn.close()
     return jsonify({'systems': systems_dict, 'wormholes': visible_wormholes})
 
+# --- NEW: Shared Intel Markers Endpoints ---
+@app.route('/api/intel', methods=['GET', 'POST', 'DELETE'])
+def handle_intel():
+    if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
+    
+    conn, cursor = get_db_connection()
+    pg_compat = bool(DATABASE_URL)
+    param = '%s' if pg_compat else '?'
+    user_id = session['user_id']
+    faction_id = session['faction_id']
+    
+    try:
+        if request.method == 'GET':
+            cursor.execute(f"SELECT id, system_id, x, y, type, note, created_by_user_id FROM faction_intel WHERE faction_id = {param}", (faction_id,))
+            markers = cursor.fetchall()
+            return jsonify(markers)
+            
+        elif request.method == 'POST':
+            data = request.get_json()
+            x, y = data.get('x'), data.get('y')
+            m_type = data.get('type')
+            note = data.get('note', '')
+            system_id = data.get('system_id') # Optional
+            
+            if x is None or y is None or not m_type:
+                return jsonify({'error': 'Missing required fields (x, y, type)'}), 400
+            
+            if pg_compat:
+                cursor.execute(f"INSERT INTO faction_intel (faction_id, system_id, x, y, type, note, created_by_user_id) VALUES ({param}, {param}, {param}, {param}, {param}, {param}, {param}) RETURNING id", 
+                               (faction_id, system_id, x, y, m_type, note, user_id))
+                new_id = cursor.fetchone()['id']
+            else:
+                cursor.execute("INSERT INTO faction_intel (faction_id, system_id, x, y, type, note, created_by_user_id) VALUES (?, ?, ?, ?, ?, ?, ?)", 
+                               (faction_id, system_id, x, y, m_type, note, user_id))
+                new_id = cursor.lastrowid
+            
+            conn.commit()
+            return jsonify({'message': 'Marker added', 'id': new_id})
+            
+        elif request.method == 'DELETE':
+            data = request.get_json()
+            marker_id = data.get('id')
+            
+            if not marker_id: return jsonify({'error': 'Marker ID required'}), 400
+            
+            # Only allow deleting markers belonging to own faction
+            cursor.execute(f"DELETE FROM faction_intel WHERE id = {param} AND faction_id = {param}", (marker_id, faction_id))
+            if cursor.rowcount == 0:
+                return jsonify({'error': 'Marker not found or permission denied'}), 404
+            
+            conn.commit()
+            return jsonify({'message': 'Marker deleted'})
+            
+    except Exception as e:
+        conn.rollback()
+        print(f"ERROR in /api/intel: {e}", file=sys.stderr)
+        return jsonify({'error': f'Database error: {e}'}), 500
+    finally:
+        conn.close()
+# --- END NEW ---
+
 # --- MODIFIED: /api/path with NEW catapult logic AND hostile avoidance ---
 @app.route('/api/path', methods=['POST'])
 def calculate_path():
@@ -1040,7 +1116,7 @@ def calculate_path():
     penalty_multiplier = 100 # Define the penalty multiplier
     
     if not start_input or not end_input: return jsonify({'error': 'start_id and end_id are required'}), 400
-    conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
+    conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?';
     user_faction_id = session.get('faction_id')
     relationships = {}
     if user_faction_id:

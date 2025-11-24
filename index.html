@@ -10,8 +10,9 @@
         canvas { touch-action: none; cursor: grab; background-color: #1f2937; border-radius: 0.5rem; }
         canvas:active { cursor: grabbing; }
         .hidden { display: none; }
-        input:focus {
+        input:focus, select:focus, textarea:focus {
             box-shadow: 0 0 0 2px #4f46e5;
+            outline: none;
         }
         .logo-container {
             position: relative;
@@ -40,6 +41,12 @@
             50% { transform: translateY(-10px); }
             100% { transform: translateY(0px); }
         }
+        /* Context Menu Styling */
+        #intel-context-menu {
+            position: absolute;
+            z-index: 50;
+            min-width: 200px;
+        }
     </style>
     <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
@@ -47,8 +54,22 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
     <link rel="manifest" href="/site.webmanifest">
 </head>
-<body class="h-screen antialiased overflow-hidden">
+<body class="h-screen antialiased overflow-hidden relative">
 
+    <div id="intel-context-menu" class="hidden bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-4 flex-col space-y-3">
+        <h3 class="text-sm font-bold text-white border-b border-gray-700 pb-2">Add Intel Marker</h3>
+        <div class="text-xs text-gray-400" id="intel-coords-display"></div>
+        <select id="intel-type-input" class="bg-gray-700 border border-gray-600 rounded text-white text-sm p-2">
+            <option value="Mining Rich">Mining Rich</option>
+            <option value="Hazard">Hazard</option>
+            <option value="Point of Interest">Point of Interest</option>
+        </select>
+        <textarea id="intel-note-input" placeholder="Optional notes..." class="bg-gray-700 border border-gray-600 rounded text-white text-sm p-2 h-16 resize-none"></textarea>
+        <div class="flex justify-end space-x-2">
+            <button id="cancel-intel-btn" class="px-3 py-1 text-xs text-gray-300 hover:text-white">Cancel</button>
+            <button id="save-intel-btn" class="px-3 py-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded">Save</button>
+        </div>
+    </div>
     <div id="login-view" class="flex items-center justify-center h-full">
         <div class="w-full max-w-md p-8 space-y-8 bg-gray-900 rounded-lg shadow-lg">
             <div class="logo-container"><img src="/logo.png" alt="Galactic Star Map Logo"></div>
@@ -115,7 +136,6 @@
                     <button id="sync-button" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md">Sync Map Data</button>
                     <p id="sync-status" class="text-sm text-center text-gray-400 mt-2 h-4" aria-live="assertive"></p>
                 </div>
-                
                 <form id="route-form" class="space-y-4">
                     <div class="relative">
                         <label class="block text-xs text-gray-500 mb-1">Start</label>
@@ -124,7 +144,7 @@
 
                     <div id="waypoints-container" class="space-y-2"></div>
                     
-                    <button type="button" id="add-waypoint-btn" class="text-xs text-indigo-400 hover:text-indigo-300 flex items-center">
+                    <button type="button" id="add-waypoint-btn" class="text-xs text-indigo-400 hover:text-indigo-300 flex items-center focus:outline-none">
                         <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
                         Add Waypoint
                     </button>
@@ -174,7 +194,7 @@
                         <input id="toggle-unclaimed-names" type="checkbox" class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
                         <label for="toggle-unclaimed-names" class="ml-2 block text-sm text-gray-300">Show Unclaimed Names</label>
                     </div>
-                    <p class="text-xs text-gray-500">Click a system to highlight its range. Long-press/Shift+Click to toggle.</p>
+                    <p class="text-xs text-gray-500">Click system to highlight range. Right-Click/Long-Press for Intel. Shift+Click to toggle range.</p>
                     <button id="reset-view-button" class="mt-2 w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-md text-sm">Reset View</button>
                 </div>
             </div>
@@ -215,7 +235,12 @@
         
         let pingAnimation = null; 
         let isAnimatingPing = false; 
-        let pingAnimationFrameId = null; 
+        let pingAnimationFrameId = null;
+        
+        // --- NEW: Intel State ---
+        let intelMarkers = [];
+        let pendingIntelCoords = null; // {x, y} for the menu
+        // --- END NEW ---
 
         const dom = { 
             loginView: document.getElementById('login-view'), mapView: document.getElementById('map-view'), registerView: document.getElementById('register-view'), 
@@ -224,8 +249,8 @@
             logoutButton: document.getElementById('logout-button'), welcomeMessage: document.getElementById('welcome-message'), 
             syncContainer: document.getElementById('sync-container'), syncButton: document.getElementById('sync-button'), syncStatus: document.getElementById('sync-status'), 
             routeForm: document.getElementById('route-form'), startSystemInput: document.getElementById('start-system-input'), endSystemInput: document.getElementById('end-system-input'), 
-            waypointsContainer: document.getElementById('waypoints-container'), // NEW
-            addWaypointBtn: document.getElementById('add-waypoint-btn'), // NEW
+            waypointsContainer: document.getElementById('waypoints-container'),
+            addWaypointBtn: document.getElementById('add-waypoint-btn'),
             systemDataList: document.getElementById('system-list'), routeDetailsContainer: document.getElementById('route-details'), 
             profileButton: document.getElementById('profile-button'), closeProfileButton: document.getElementById('close-profile-button'), profileForm: document.getElementById('profile-form'), 
             apiKeyInput: document.getElementById('api-key-input'), newPasswordInput: document.getElementById('new-password-input'), profileStatus: document.getElementById('profile-status'), 
@@ -242,7 +267,15 @@
             filterAvoidHostile: document.getElementById('filter-avoid-hostile'),
             bulkSyncButton: document.getElementById('bulk-sync-button'),
             bulkSyncText: document.getElementById('bulk-sync-text'),
-            centerMeButton: document.getElementById('center-me-button')
+            centerMeButton: document.getElementById('center-me-button'),
+            // --- NEW: Intel Context Menu DOM ---
+            intelContextMenu: document.getElementById('intel-context-menu'),
+            intelCoordsDisplay: document.getElementById('intel-coords-display'),
+            intelTypeInput: document.getElementById('intel-type-input'),
+            intelNoteInput: document.getElementById('intel-note-input'),
+            cancelIntelBtn: document.getElementById('cancel-intel-btn'),
+            saveIntelBtn: document.getElementById('save-intel-btn')
+            // --- END NEW ---
         };
 
         const apiFetch = (url, options = {}) => { options.credentials = 'include'; return fetch(url, options); };
@@ -327,13 +360,27 @@
         const closeProfile = () => dom.profileView.classList.add('hidden');
         const handleProfileUpdate = async (e) => { e.preventDefault(); dom.profileStatus.textContent = 'Saving...'; const p={}; if (dom.apiKeyInput.value && dom.apiKeyInput.value !== '(Key is set and encrypted)') p.api_key = dom.apiKeyInput.value; if (dom.newPasswordInput.value) p.password = dom.newPasswordInput.value; try { const r=await apiFetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}); if (!r.ok) throw new Error(`Save failed: ${r.statusText}`); const d=await r.json(); dom.profileStatus.textContent = d.message; setTimeout(closeProfile, 2000); } catch(error) { dom.profileStatus.textContent = `Error: ${error.message}`; console.error("Profile update error:", error); } };
         
+        // --- MODIFIED: Fetch Intel Data ---
         async function fetchMapData(shouldFit = true, oldSystemIds = null) { 
             try {
-                const r = await apiFetch('/api/systems'); 
-                if (!r.ok) { if (r.status === 401) handleLogout(); else throw new Error(`Failed to load systems: ${r.statusText}`); return; } 
-                const d = await r.json(); 
+                // Parallel fetch for systems and intel
+                const [systemsRes, intelRes] = await Promise.all([
+                    apiFetch('/api/systems'),
+                    apiFetch('/api/intel')
+                ]);
+
+                if (!systemsRes.ok) { if (systemsRes.status === 401) handleLogout(); else throw new Error(`Failed to load systems: ${systemsRes.statusText}`); return; } 
+                
+                const d = await systemsRes.json(); 
                 systems = d.systems; 
                 wormholes = d.wormholes; 
+
+                if (intelRes.ok) {
+                    intelMarkers = await intelRes.json();
+                } else {
+                    console.error("Failed to load intel markers");
+                }
+
                 populateDataList(); 
                 if (shouldFit) { fitMapToView(); }
                 
@@ -352,128 +399,33 @@
                     }
                 }
                 drawMap();
-            } catch (e) { console.error("Failed to fetch or draw map data:", e); /* Optionally show error to user */ } 
-        }
-        
-        // --- NEW: Function to add a waypoint input ---
-        function addWaypointInput() {
-            const container = dom.waypointsContainer;
-            const div = document.createElement('div');
-            div.className = 'relative flex items-center space-x-2';
-            
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.className = 'route-input w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500';
-            input.placeholder = 'Waypoint...';
-            input.setAttribute('list', 'system-list');
-            
-            const removeBtn = document.createElement('button');
-            removeBtn.type = 'button';
-            removeBtn.className = 'text-red-400 hover:text-red-300';
-            removeBtn.innerHTML = '&times;';
-            removeBtn.title = 'Remove Waypoint';
-            removeBtn.onclick = () => div.remove();
-
-            div.appendChild(input);
-            div.appendChild(removeBtn);
-            container.appendChild(div);
-            
-            // Attach focus listener for "click map to populate" logic
-            input.addEventListener('focus', () => { activeRouteInput = input; });
-        }
-
-        // --- MODIFIED: findPath for Multi-Stop Routing ---
-        async function findPath() {
-            const startVal = dom.startSystemInput.value.trim();
-            const endVal = dom.endSystemInput.value.trim();
-            
-            // Gather waypoint values
-            const waypoints = [];
-            dom.waypointsContainer.querySelectorAll('input').forEach(input => {
-                const val = input.value.trim();
-                if (val) waypoints.push(val);
-            });
-
-            if (!startVal || !endVal) {
-                 dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Please define at least Start and Destination.</p>`;
-                 return;
-            }
-
-            const routeStops = [startVal, ...waypoints, endVal];
-            const avoidSlow = dom.filterAvoidSlow.checked;
-            const avoidHostile = dom.filterAvoidHostile.checked;
-            
-            dom.routeDetailsContainer.innerHTML = '<p class="text-gray-400">Calculating route...</p>';
-            
-            try {
-                let totalDist = 0;
-                let combinedPathNodes = [];
-                let combinedDetailedPath = [];
-                
-                const parseInput = (val) => {
-                     if (val.match(/^#\d+(\.\d+)?$/)) { 
-                         const pos = parseFloat(val.substring(1)); 
-                         return !isNaN(pos) ? `pos:${pos}` : null; 
-                     }
-                     const system = Object.values(systems).find(s => 
-                         (s.name && s.name.toLowerCase() === val.toLowerCase()) || 
-                         (s.position && `#${s.position}` === val)
-                     );
-                     return system ? `sys:${system.id}` : null;
-                };
-
-                // Create pairs for requests: [Start, W1], [W1, W2], [W2, End]
-                const requests = [];
-                for (let i = 0; i < routeStops.length - 1; i++) {
-                    const sId = parseInput(routeStops[i]);
-                    const eId = parseInput(routeStops[i+1]);
-                    
-                    if (!sId || !eId) throw new Error(`Invalid system: ${!sId ? routeStops[i] : routeStops[i+1]}`);
-                    
-                    requests.push(apiFetch('/api/path', { 
-                        method: 'POST', 
-                        headers: { 'Content-Type': 'application/json' }, 
-                        body: JSON.stringify({ 
-                            start_id: sId, 
-                            end_id: eId,
-                            avoid_slow_regions: avoidSlow,
-                            avoid_hostile: avoidHostile
-                        })
-                    }));
-                }
-
-                // Execute all requests in parallel
-                const responses = await Promise.all(requests);
-                
-                for (const r of responses) {
-                    const d = await r.json();
-                    if (!r.ok) throw new Error(d.error || `Calculation failed`);
-                    
-                    if (d.distance === null) {
-                        throw new Error("No path found for one or more segments.");
-                    }
-
-                    totalDist += d.distance;
-                    // Concatenate path nodes (filtering duplicates at join points visually handles itself)
-                    combinedPathNodes = combinedPathNodes.concat(d.path);
-                    combinedDetailedPath = combinedDetailedPath.concat(d.detailed_path);
-                }
-                
-                // Build a synthetic result object
-                const finalResult = {
-                    distance: totalDist,
-                    path: combinedPathNodes,
-                    detailed_path: combinedDetailedPath
-                };
-                
-                displayPathResults(finalResult, routeStops); // Pass routeStops for display names if needed
-
-            } catch (error) {
-                 console.error("Pathfinding error:", error);
-                 dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Error: ${error.message}</p>`;
-            }
+            } catch (e) { console.error("Failed to fetch or draw map data:", e); } 
         }
         // --- END MODIFIED ---
+
+        async function findPath(startId, endId) { 
+            const avoidSlow = dom.filterAvoidSlow.checked; 
+            const avoidHostile = dom.filterAvoidHostile.checked;
+            dom.routeDetailsContainer.innerHTML = '<p class="text-gray-400">Calculating route...</p>'; 
+            try {
+                const r = await apiFetch('/api/path', { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ 
+                        start_id: startId, 
+                        end_id: endId,
+                        avoid_slow_regions: avoidSlow,
+                        avoid_hostile: avoidHostile
+                    }), 
+                }); 
+                const d = await r.json();
+                if (!r.ok) { throw new Error(d.error || `Calculation failed: ${r.statusText}`); }
+                displayPathResults(d); 
+            } catch (error) {
+                 console.error("Pathfinding error:", error);
+                 dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Error calculating route: ${error.message}</p>`;
+            }
+        }
 
         function showLoginView() { dom.mapView.classList.add('hidden'); dom.registerView.classList.add('hidden'); dom.loginView.classList.remove('hidden'); }
         function showRegisterView() { dom.mapView.classList.add('hidden'); dom.loginView.classList.add('hidden'); dom.registerView.classList.remove('hidden'); }
@@ -511,7 +463,6 @@
             Array.from(options).sort().forEach(val => { const o = document.createElement('option'); o.value = val; dom.systemDataList.appendChild(o); });
         }
         
-        // --- MODIFIED: displayPathResults to handle multi-stop ---
         function displayPathResults(result, routeStopsInput = []) {
             dom.routeDetailsContainer.innerHTML = ''; 
             calculatedPathNodes = result.path || []; 
@@ -520,14 +471,11 @@
             const allNodes = {};
             calculatedPathNodes.forEach(p => allNodes[p.id] = p);
             
-            // Use inputs passed in for title, else try to deduce
-            let titleText = "Route";
-            if (routeStopsInput.length > 0) {
-                titleText = `Route: ${routeStopsInput[0]} &rarr; ${routeStopsInput[routeStopsInput.length-1]}`;
-            }
+            const startInputVal = dom.startSystemInput.value || (allNodes[calculatedPathLegs?.[0]?.from_id]?.name || 'Start');
+            const endInputVal = dom.endSystemInput.value || (allNodes[calculatedPathLegs?.[calculatedPathLegs.length - 1]?.to_id]?.name || 'End');
 
-            // Don't clear inputs automatically anymore to allow editing
-            // dom.startSystemInput.value = ''; 
+            dom.startSystemInput.value = '';
+            dom.endSystemInput.value = '';
             
             if (calculatedPathLegs.length > 0 && result.distance != null) {
                 const counts = { sublight: 0, catapult: 0, catapult_sublight: 0, wormhole: 0 };
@@ -560,12 +508,8 @@
                     return node.name;
                 };
 
-                // Display initial start point
-                if (calculatedPathLegs.length > 0) {
-                     const firstLeg = calculatedPathLegs[0];
-                     const startNode = allNodes[firstLeg.from_id];
-                     html += `<li class="text-gray-300">1. Start at: <span class="font-semibold text-white">${getDisplayName(startNode)}</span></li>`;
-                }
+                const startNode = allNodes[calculatedPathLegs[0].from_id];
+                html += `<li class="text-gray-300">1. Start at: <span class="font-semibold text-white">${getDisplayName(startNode)}</span></li>`;
                 
                 calculatedPathLegs.forEach((leg, index) => { 
                     let travelMethod = leg.method.charAt(0).toUpperCase() + leg.method.slice(1); 
@@ -594,7 +538,6 @@
             }
             drawMap(); 
         }
-        // --- END MODIFIED ---
 
         function toggleSidePanel() {
             const isExpanded = dom.menuButton.getAttribute('aria-expanded') === 'true';
@@ -660,13 +603,9 @@
             calculatedPathNodes = []; 
             calculatedPathLegs = []; 
             dom.routeDetailsContainer.innerHTML = ''; 
-            
-            // Clear inputs
             dom.startSystemInput.value = '';
             dom.endSystemInput.value = '';
-            // Remove waypoints
             dom.waypointsContainer.innerHTML = '';
-            
             drawMap(); 
         } 
         function resizeCanvas() { if(dom.canvas.parentElement.clientWidth > 0){ dom.canvas.width = dom.canvas.clientWidth; dom.canvas.height = dom.canvas.clientHeight; if(dom.canvas.width > 0) drawMap(); } }
@@ -680,13 +619,10 @@
             ctx.lineWidth = 3 / viewTransform.scale;
             const s = 1; 
             ctx.beginPath(); 
-            
             const startPoint = getSpiralPoint(posA);
             ctx.moveTo(startPoint.x, startPoint.y); 
-            
             const dist = Math.abs(posB - posA);
             const sign = Math.sign(posB - posA);
-            
             for (let j = 1; j <= Math.floor(dist / s); j++) {
                 const p = posA + (j * s * sign);
                 const point = getSpiralPoint(p);
@@ -713,7 +649,6 @@
                     const sysPos = parseFloat(sys.position);
                     const sysRadius = parseFloat(sys.catapult_radius);
                     if (isNaN(sysPos) || isNaN(sysRadius) || sysRadius <= 0) return;
-                    
                     const isToggled = toggledCatapultIds.has(String(sys.id));
                     if (!isToggled) { 
                         let rangeColor = 'rgba(132, 204, 22, 0.3)';
@@ -737,41 +672,32 @@
             const calculatedPathIds = new Set(calculatedPathNodes.map(p => p.id));
             if (calculatedPathLegs.length > 0) {
                 const nodeMap = new Map(calculatedPathNodes.map(n => [n.id, n]));
-
                 calculatedPathLegs.forEach(leg => {
                     const sA = nodeMap.get(leg.from_id);
                     const sB = nodeMap.get(leg.to_id);
-
                     if (!sA || !sB) return; 
                     const posA = parseFloat(sA.position); 
                     const posB = parseFloat(sB.position);
                     if (isNaN(posA) || isNaN(posB)) return;
-
                     if (leg.method === 'wormhole') { 
                         ctx.strokeStyle='#ef4444'; ctx.lineWidth=3/viewTransform.scale; 
                         ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); 
-                    
                     } else if (leg.method === 'catapult') { 
                         ctx.strokeStyle='#a3e635'; ctx.lineWidth=3/viewTransform.scale; 
                         ctx.beginPath(); ctx.moveTo(sA.x, sA.y); ctx.lineTo(sB.x, sB.y); ctx.stroke(); 
-                    
                     } else if (leg.method === 'catapult_sublight') {
                         const catapultRadius = systems[sA.id]?.catapult_radius || 0;
                         const sign = Math.sign(posB - posA);
                         const virtualNodePos = posA + (sign * catapultRadius);
-
                         const coordsA = { x: sA.x, y: sA.y };
                         const coordsV = getSpiralPoint(virtualNodePos);
-
                         ctx.strokeStyle = '#a3e635'; 
                         ctx.lineWidth = 3 / viewTransform.scale; 
                         ctx.beginPath(); 
                         ctx.moveTo(coordsA.x, coordsA.y); 
                         ctx.lineTo(coordsV.x, coordsV.y); 
                         ctx.stroke();
-
                         drawSublight(virtualNodePos, posB);
-
                         ctx.fillStyle = '#f59e0b'; 
                         ctx.strokeStyle = '#1f2937'; 
                         ctx.lineWidth = 1 / viewTransform.scale;
@@ -779,7 +705,6 @@
                         ctx.arc(coordsV.x, coordsV.y, 3 / viewTransform.scale, 0, Math.PI * 2);
                         ctx.fill();
                         ctx.stroke();
-                        
                     } else { 
                         drawSublight(posA, posB); 
                     }
@@ -797,7 +722,6 @@
                 ctx.beginPath();
                 ctx.arc(sys.x, sys.y, (isOnPath || isHovered || isSearched ? 6 : 4) / viewTransform.scale, 0, Math.PI * 2);
                 ctx.fill();
-
                 if (isNewlySynced) {
                     ctx.strokeStyle = 'rgba(250, 204, 21, 0.9)';
                     ctx.lineWidth = 3 / viewTransform.scale;
@@ -821,7 +745,6 @@
                 const isOnPath = calculatedPathIds.has(String(sys.id));
                 const isHovered = hoveredSystem && hoveredSystem.id === sys.id;
                 const isSearched = highlightedSearchSystemId === sys.id;
-                
                 let labelText = sys.name;
                 const isDefaultName = labelText && labelText.startsWith("System ");
                 if (isDefaultName && typeof sys.position === 'string' && sys.position !== '') { 
@@ -829,12 +752,10 @@
                 } else if (!labelText) {
                     labelText = `ID: ${sys.id}`; 
                 }
-
                 let shouldShowLabel = (isOnPath || isHovered || isSearched || viewTransform.scale > 0.8);
                 if (isDefaultName && !showUnclaimedNames && !isOnPath && !isHovered && !isSearched) { 
                     shouldShowLabel = false; 
                 }
-
                 if (shouldShowLabel) {
                     ctx.fillStyle = (isOnPath || isHovered || isSearched) ? '#ffffff' : '#e5e7eb';
                     ctx.font = `${(isOnPath || isHovered || isSearched ? 12 : 10) / viewTransform.scale}px Inter`;
@@ -858,11 +779,9 @@
                 if (typeof sys.x === 'number' && typeof sys.y === 'number') { 
                     const elapsed = Date.now() - pingAnimation.startTime;
                     const progress = elapsed / pingAnimation.duration; 
-                    
                     const maxRadius = (Math.max(dom.canvas.width, dom.canvas.height) / 2) / viewTransform.scale;
                     const currentRadius = Math.max(0, maxRadius * (1 - progress)); 
                     const currentAlpha = Math.max(0, 1 - (progress * 0.8)); 
-                    
                     if (currentRadius > 0 && currentAlpha > 0) { 
                         ctx.strokeStyle = `rgba(245, 158, 11, ${currentAlpha})`; 
                         ctx.lineWidth = 4 / viewTransform.scale;
@@ -870,13 +789,11 @@
                         ctx.arc(sys.x, sys.y, currentRadius, 0, Math.PI * 2);
                         ctx.stroke();
                     }
-
                     const delay = 150; 
                     if (elapsed > delay) {
                         const progress2 = (elapsed - delay) / (pingAnimation.duration - delay);
                         const currentRadius2 = Math.max(0, maxRadius * (1 - progress2));
                         const currentAlpha2 = Math.max(0, 1 - (progress2 * 0.8));
-                        
                         if (currentRadius2 > 0 && currentAlpha2 > 0) { 
                             ctx.lineWidth = 2 / viewTransform.scale; 
                             ctx.strokeStyle = `rgba(245, 158, 11, ${currentAlpha2})`; 
@@ -888,8 +805,129 @@
                 }
             }
 
+            // --- NEW: Draw Intel Markers ---
+            intelMarkers.forEach(marker => {
+                if (typeof marker.x === 'number' && typeof marker.y === 'number') {
+                    const x = marker.x;
+                    const y = marker.y;
+                    
+                    ctx.save();
+                    ctx.translate(x, y);
+                    
+                    // Scale size slightly so they don't vanish too fast on zoom out, 
+                    // but don't get massive on zoom in.
+                    const size = Math.max(6, 12 / viewTransform.scale); 
+                    
+                    if (marker.type === "Mining Rich") {
+                        // Cyan Square
+                        ctx.fillStyle = '#22d3ee'; // Cyan-400
+                        ctx.fillRect(-size/2, -size/2, size, size);
+                    } else if (marker.type === "Hazard") {
+                        // Orange Triangle
+                        ctx.fillStyle = '#fb923c'; // Orange-400
+                        ctx.beginPath();
+                        ctx.moveTo(0, -size/2);
+                        ctx.lineTo(size/2, size/2);
+                        ctx.lineTo(-size/2, size/2);
+                        ctx.closePath();
+                        ctx.fill();
+                    } else if (marker.type === "Point of Interest") {
+                        // Purple Circle
+                        ctx.fillStyle = '#c084fc'; // Purple-400
+                        ctx.beginPath();
+                        ctx.arc(0, 0, size/2, 0, Math.PI*2);
+                        ctx.fill();
+                    }
+                    
+                    ctx.restore();
+                }
+            });
+            // --- END NEW ---
+            
             ctx.restore();
         }
+
+        // --- NEW: Context Menu Logic ---
+        function openContextMenu(x, y, worldX, worldY) {
+            // Hide context menu initially
+            dom.intelContextMenu.classList.add('hidden');
+            
+            // Set position
+            dom.intelContextMenu.style.left = `${x}px`;
+            dom.intelContextMenu.style.top = `${y}px`;
+            
+            // Update coordinates display
+            dom.pendingIntelCoords = { x: worldX, y: worldY };
+            // Try to find nearest system for context
+            let nearestSys = null;
+            let nearestDist = Infinity;
+            Object.values(systems).forEach(s => {
+                const dx = worldX - s.x;
+                const dy = worldY - s.y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                if(dist < nearestDist) { nearestDist = dist; nearestSys = s; }
+            });
+            
+            let coordText = `Coordinates: ${worldX.toFixed(0)}, ${worldY.toFixed(0)}`;
+            // Associate with system if very close (within 5 pixels at current zoom)
+            if (nearestSys && nearestDist < (10 / viewTransform.scale)) {
+                dom.pendingIntelCoords.system_id = nearestSys.id;
+                coordText += ` (Near ${nearestSys.name})`;
+            } else {
+                delete dom.pendingIntelCoords.system_id;
+            }
+            dom.intelCoordsDisplay.textContent = coordText;
+            dom.intelNoteInput.value = ''; // Clear previous note
+            
+            // Show menu
+            dom.intelContextMenu.classList.remove('hidden');
+        }
+        
+        function closeContextMenu() {
+            dom.intelContextMenu.classList.add('hidden');
+            dom.pendingIntelCoords = null;
+        }
+        
+        async function saveIntelMarker() {
+            if (!dom.pendingIntelCoords) return;
+            const type = dom.intelTypeInput.value;
+            const note = dom.intelNoteInput.value;
+            
+            try {
+                const r = await apiFetch('/api/intel', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        x: dom.pendingIntelCoords.x,
+                        y: dom.pendingIntelCoords.y,
+                        system_id: dom.pendingIntelCoords.system_id,
+                        type: type,
+                        note: note
+                    })
+                });
+                
+                if (r.ok) {
+                    closeContextMenu();
+                    fetchMapData(false); // Refresh map to show new marker
+                } else {
+                    const d = await r.json();
+                    alert("Failed to save marker: " + (d.error || "Unknown error"));
+                }
+            } catch (e) {
+                console.error("Error saving intel:", e);
+            }
+        }
+        
+        // Event Listeners for Context Menu
+        dom.cancelIntelBtn.addEventListener('click', closeContextMenu);
+        dom.saveIntelBtn.addEventListener('click', saveIntelMarker);
+        
+        // Delete marker on Right-click if clicked ON a marker? 
+        // Simpler for now: Right-click empty space -> Add. 
+        // To delete: Maybe shift+right-click on it? 
+        // Let's stick to creation first. We can add a "Clear" button in the future if needed.
+        // --- END NEW ---
+
         function handleToggleUnclaimedNames(e) { showUnclaimedNames = e.target.checked; drawMap(); }
         function handleResetView() { fitMapToView(); drawMap(); }
 
@@ -902,6 +940,11 @@
         }
 
         function onInteractionStart(e) {
+            // If context menu is open and we click outside, close it
+            if (!dom.intelContextMenu.classList.contains('hidden') && !dom.intelContextMenu.contains(e.target)) {
+                 closeContextMenu();
+            }
+
             isMouseDown = true; isDragging = false;
             const coords = getEventCoordinates(e);
             dragStartPos = { x: coords.x, y: coords.y };
@@ -909,11 +952,21 @@
             
             clearTimeout(longPressTimer);
             longPressTimer = setTimeout(() => {
-                if (!isDragging && hoveredSystem && hoveredSystem.catapult_radius > 0) {
-                    const systemId = String(hoveredSystem.id);
-                    if (toggledCatapultIds.has(systemId)) { toggledCatapultIds.delete(systemId); } 
-                    else { toggledCatapultIds.add(systemId); }
-                    drawMap();
+                if (!isDragging) {
+                    // Check for system range toggle first
+                    if (hoveredSystem && hoveredSystem.catapult_radius > 0) {
+                        const systemId = String(hoveredSystem.id);
+                        if (toggledCatapultIds.has(systemId)) { toggledCatapultIds.delete(systemId); } 
+                        else { toggledCatapultIds.add(systemId); }
+                        drawMap();
+                    } else {
+                        // --- NEW: Mobile Long Press for Context Menu ---
+                        // If not hovering a catapult system, open context menu
+                         const worldX = (coords.x - viewTransform.translateX) / viewTransform.scale;
+                         const worldY = (coords.y - viewTransform.translateY) / viewTransform.scale;
+                         openContextMenu(coords.x, coords.y, worldX, worldY);
+                        // --- END NEW ---
+                    }
                 }
             }, 500);
         }
@@ -1035,13 +1088,11 @@
             dom.menuButton.addEventListener('click', toggleSidePanel);
             dom.centerMeButton.addEventListener('click', centerOnMyLocation); 
             
-            // --- MODIFIED: Event listeners for dynamic route form ---
             dom.addWaypointBtn.addEventListener('click', addWaypointInput);
             dom.routeForm.addEventListener('submit', (e) => {
                 e.preventDefault();
-                findPath(); // findPath now reads DOM directly
+                findPath(); 
             });
-            // --- END MODIFIED ---
 
             dom.searchForm.addEventListener('submit', (e) => {
                 e.preventDefault();
@@ -1105,6 +1156,19 @@
             dom.canvas.addEventListener('touchmove', onInteractionMove, { passive: false }); 
             dom.canvas.addEventListener('touchend', onInteractionEnd);
             dom.canvas.addEventListener('touchcancel', onInteractionEnd); 
+            
+            // --- NEW: Context Menu Right-Click Listener ---
+            dom.canvas.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                const rect = dom.canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                const worldX = (x - viewTransform.translateX) / viewTransform.scale;
+                const worldY = (y - viewTransform.translateY) / viewTransform.scale;
+                
+                openContextMenu(e.clientX, e.clientY, worldX, worldY);
+            });
+            // --- END NEW ---
         }
         
         setupEventListeners();
