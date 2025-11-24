@@ -115,11 +115,28 @@
                     <button id="sync-button" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md">Sync Map Data</button>
                     <p id="sync-status" class="text-sm text-center text-gray-400 mt-2 h-4" aria-live="assertive"></p>
                 </div>
+                
                 <form id="route-form" class="space-y-4">
-                    <input type="text" id="start-system-input" list="system-list" class="w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="Start System or #Position...">
-                    <input type="text" id="end-system-input" list="system-list" class="w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="End System or #Position...">
+                    <div class="relative">
+                        <label class="block text-xs text-gray-500 mb-1">Start</label>
+                        <input type="text" id="start-system-input" list="system-list" class="route-input w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="Start System or #Pos...">
+                    </div>
+
+                    <div id="waypoints-container" class="space-y-2"></div>
+                    
+                    <button type="button" id="add-waypoint-btn" class="text-xs text-indigo-400 hover:text-indigo-300 flex items-center">
+                        <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                        Add Waypoint
+                    </button>
+
+                    <div class="relative">
+                        <label class="block text-xs text-gray-500 mb-1">Destination</label>
+                        <input type="text" id="end-system-input" list="system-list" class="route-input w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="End System or #Pos...">
+                    </div>
+                    
                     <datalist id="system-list"></datalist>
-                    <div class="space-y-2 pt-2">
+                    
+                    <div class="space-y-2 pt-2 border-t border-gray-700">
                         <div class="flex items-center">
                             <input id="filter-avoid-slow" type="checkbox" class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
                             <label for="filter-avoid-slow" class="ml-2 block text-sm text-gray-300">Avoid Slow Sublight Regions</label>
@@ -128,7 +145,7 @@
                             <input id="filter-avoid-hostile" type="checkbox" class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
                             <label for="filter-avoid-hostile" class="ml-2 block text-sm text-gray-300">Avoid Hostile Systems</label>
                         </div>
-                        </div>
+                    </div>
                     <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md">Find Shortest Path</button>
                 </form>
                 <div id="route-details" aria-live="polite" class="space-y-2"></div>
@@ -207,6 +224,8 @@
             logoutButton: document.getElementById('logout-button'), welcomeMessage: document.getElementById('welcome-message'), 
             syncContainer: document.getElementById('sync-container'), syncButton: document.getElementById('sync-button'), syncStatus: document.getElementById('sync-status'), 
             routeForm: document.getElementById('route-form'), startSystemInput: document.getElementById('start-system-input'), endSystemInput: document.getElementById('end-system-input'), 
+            waypointsContainer: document.getElementById('waypoints-container'), // NEW
+            addWaypointBtn: document.getElementById('add-waypoint-btn'), // NEW
             systemDataList: document.getElementById('system-list'), routeDetailsContainer: document.getElementById('route-details'), 
             profileButton: document.getElementById('profile-button'), closeProfileButton: document.getElementById('close-profile-button'), profileForm: document.getElementById('profile-form'), 
             apiKeyInput: document.getElementById('api-key-input'), newPasswordInput: document.getElementById('new-password-input'), profileStatus: document.getElementById('profile-status'), 
@@ -220,7 +239,7 @@
             filterCatapults: document.getElementById('filter-catapults'),
             filterWormholes: document.getElementById('filter-wormholes'),
             filterAvoidSlow: document.getElementById('filter-avoid-slow'), 
-            filterAvoidHostile: document.getElementById('filter-avoid-hostile'), // NEW
+            filterAvoidHostile: document.getElementById('filter-avoid-hostile'),
             bulkSyncButton: document.getElementById('bulk-sync-button'),
             bulkSyncText: document.getElementById('bulk-sync-text'),
             centerMeButton: document.getElementById('center-me-button')
@@ -335,30 +354,126 @@
                 drawMap();
             } catch (e) { console.error("Failed to fetch or draw map data:", e); /* Optionally show error to user */ } 
         }
+        
+        // --- NEW: Function to add a waypoint input ---
+        function addWaypointInput() {
+            const container = dom.waypointsContainer;
+            const div = document.createElement('div');
+            div.className = 'relative flex items-center space-x-2';
+            
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'route-input w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500';
+            input.placeholder = 'Waypoint...';
+            input.setAttribute('list', 'system-list');
+            
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'text-red-400 hover:text-red-300';
+            removeBtn.innerHTML = '&times;';
+            removeBtn.title = 'Remove Waypoint';
+            removeBtn.onclick = () => div.remove();
 
-        async function findPath(startId, endId) { 
-            const avoidSlow = dom.filterAvoidSlow.checked; 
-            const avoidHostile = dom.filterAvoidHostile.checked; // NEW
-            dom.routeDetailsContainer.innerHTML = '<p class="text-gray-400">Calculating route...</p>'; 
+            div.appendChild(input);
+            div.appendChild(removeBtn);
+            container.appendChild(div);
+            
+            // Attach focus listener for "click map to populate" logic
+            input.addEventListener('focus', () => { activeRouteInput = input; });
+        }
+
+        // --- MODIFIED: findPath for Multi-Stop Routing ---
+        async function findPath() {
+            const startVal = dom.startSystemInput.value.trim();
+            const endVal = dom.endSystemInput.value.trim();
+            
+            // Gather waypoint values
+            const waypoints = [];
+            dom.waypointsContainer.querySelectorAll('input').forEach(input => {
+                const val = input.value.trim();
+                if (val) waypoints.push(val);
+            });
+
+            if (!startVal || !endVal) {
+                 dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Please define at least Start and Destination.</p>`;
+                 return;
+            }
+
+            const routeStops = [startVal, ...waypoints, endVal];
+            const avoidSlow = dom.filterAvoidSlow.checked;
+            const avoidHostile = dom.filterAvoidHostile.checked;
+            
+            dom.routeDetailsContainer.innerHTML = '<p class="text-gray-400">Calculating route...</p>';
+            
             try {
-                const r = await apiFetch('/api/path', { 
-                    method: 'POST', 
-                    headers: { 'Content-Type': 'application/json' }, 
-                    body: JSON.stringify({ 
-                        start_id: startId, 
-                        end_id: endId,
-                        avoid_slow_regions: avoidSlow,
-                        avoid_hostile: avoidHostile // Send flag
-                    }), 
-                }); 
-                const d = await r.json();
-                if (!r.ok) { throw new Error(d.error || `Calculation failed: ${r.statusText}`); }
-                displayPathResults(d); 
+                let totalDist = 0;
+                let combinedPathNodes = [];
+                let combinedDetailedPath = [];
+                
+                const parseInput = (val) => {
+                     if (val.match(/^#\d+(\.\d+)?$/)) { 
+                         const pos = parseFloat(val.substring(1)); 
+                         return !isNaN(pos) ? `pos:${pos}` : null; 
+                     }
+                     const system = Object.values(systems).find(s => 
+                         (s.name && s.name.toLowerCase() === val.toLowerCase()) || 
+                         (s.position && `#${s.position}` === val)
+                     );
+                     return system ? `sys:${system.id}` : null;
+                };
+
+                // Create pairs for requests: [Start, W1], [W1, W2], [W2, End]
+                const requests = [];
+                for (let i = 0; i < routeStops.length - 1; i++) {
+                    const sId = parseInput(routeStops[i]);
+                    const eId = parseInput(routeStops[i+1]);
+                    
+                    if (!sId || !eId) throw new Error(`Invalid system: ${!sId ? routeStops[i] : routeStops[i+1]}`);
+                    
+                    requests.push(apiFetch('/api/path', { 
+                        method: 'POST', 
+                        headers: { 'Content-Type': 'application/json' }, 
+                        body: JSON.stringify({ 
+                            start_id: sId, 
+                            end_id: eId,
+                            avoid_slow_regions: avoidSlow,
+                            avoid_hostile: avoidHostile
+                        })
+                    }));
+                }
+
+                // Execute all requests in parallel
+                const responses = await Promise.all(requests);
+                
+                for (const r of responses) {
+                    const d = await r.json();
+                    if (!r.ok) throw new Error(d.error || `Calculation failed`);
+                    
+                    if (d.distance === null) {
+                        throw new Error("No path found for one or more segments.");
+                    }
+
+                    totalDist += d.distance;
+                    // Concatenate path nodes (filtering duplicates at join points visually handles itself)
+                    combinedPathNodes = combinedPathNodes.concat(d.path);
+                    combinedDetailedPath = combinedDetailedPath.concat(d.detailed_path);
+                }
+                
+                // Build a synthetic result object
+                const finalResult = {
+                    distance: totalDist,
+                    path: combinedPathNodes,
+                    detailed_path: combinedDetailedPath
+                };
+                
+                displayPathResults(finalResult, routeStops); // Pass routeStops for display names if needed
+
             } catch (error) {
                  console.error("Pathfinding error:", error);
-                 dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Error calculating route: ${error.message}</p>`;
+                 dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Error: ${error.message}</p>`;
             }
         }
+        // --- END MODIFIED ---
 
         function showLoginView() { dom.mapView.classList.add('hidden'); dom.registerView.classList.add('hidden'); dom.loginView.classList.remove('hidden'); }
         function showRegisterView() { dom.mapView.classList.add('hidden'); dom.loginView.classList.add('hidden'); dom.registerView.classList.remove('hidden'); }
@@ -396,7 +511,8 @@
             Array.from(options).sort().forEach(val => { const o = document.createElement('option'); o.value = val; dom.systemDataList.appendChild(o); });
         }
         
-        function displayPathResults(result) {
+        // --- MODIFIED: displayPathResults to handle multi-stop ---
+        function displayPathResults(result, routeStopsInput = []) {
             dom.routeDetailsContainer.innerHTML = ''; 
             calculatedPathNodes = result.path || []; 
             calculatedPathLegs = result.detailed_path || []; 
@@ -404,11 +520,14 @@
             const allNodes = {};
             calculatedPathNodes.forEach(p => allNodes[p.id] = p);
             
-            const startInputVal = dom.startSystemInput.value || (allNodes[calculatedPathLegs?.[0]?.from_id]?.name || 'Start');
-            const endInputVal = dom.endSystemInput.value || (allNodes[calculatedPathLegs?.[calculatedPathLegs.length - 1]?.to_id]?.name || 'End');
+            // Use inputs passed in for title, else try to deduce
+            let titleText = "Route";
+            if (routeStopsInput.length > 0) {
+                titleText = `Route: ${routeStopsInput[0]} &rarr; ${routeStopsInput[routeStopsInput.length-1]}`;
+            }
 
-            dom.startSystemInput.value = '';
-            dom.endSystemInput.value = '';
+            // Don't clear inputs automatically anymore to allow editing
+            // dom.startSystemInput.value = ''; 
             
             if (calculatedPathLegs.length > 0 && result.distance != null) {
                 const counts = { sublight: 0, catapult: 0, catapult_sublight: 0, wormhole: 0 };
@@ -428,7 +547,7 @@
                 
                 const summaryString = `<strong>Total Jumps: ${calculatedPathLegs.length}</strong> (${summaryParts.join(', ')})`;
 
-                let html = `<div class="flex justify-between items-center"><h2 class="text-lg font-semibold text-white">Route: ${startInputVal} to ${endInputVal}</h2><button id="clear-route-button" class="text-sm text-gray-400 hover:text-white focus:outline-none">&times; Clear</button></div>`;
+                let html = `<div class="flex justify-between items-center"><h2 class="text-lg font-semibold text-white truncate" title="${titleText}">${titleText}</h2><button id="clear-route-button" class="text-sm text-gray-400 hover:text-white focus:outline-none whitespace-nowrap ml-2">&times; Clear</button></div>`;
                 html += `<p class="text-sm text-gray-400">Total Distance: ${result.distance.toFixed(2)}</p>`;
                 html += `<p class="text-xs text-gray-500 mb-2">${summaryString}</p>`; 
                 html += `<ol class="mt-2 space-y-2 text-sm max-h-60 overflow-y-auto pr-2">`;
@@ -441,8 +560,12 @@
                     return node.name;
                 };
 
-                const startNode = allNodes[calculatedPathLegs[0].from_id];
-                html += `<li class="text-gray-300">1. Start at: <span class="font-semibold text-white">${getDisplayName(startNode)}</span></li>`;
+                // Display initial start point
+                if (calculatedPathLegs.length > 0) {
+                     const firstLeg = calculatedPathLegs[0];
+                     const startNode = allNodes[firstLeg.from_id];
+                     html += `<li class="text-gray-300">1. Start at: <span class="font-semibold text-white">${getDisplayName(startNode)}</span></li>`;
+                }
                 
                 calculatedPathLegs.forEach((leg, index) => { 
                     let travelMethod = leg.method.charAt(0).toUpperCase() + leg.method.slice(1); 
@@ -467,10 +590,11 @@
                 html += `</ol>`; 
                 dom.routeDetailsContainer.innerHTML = html;
             } else { 
-                dom.routeDetailsContainer.innerHTML = `<h2 class="text-lg font-semibold text-white">No Route Found</h2><p class="text-yellow-400">A path could not be found between ${startInputVal} and ${endInputVal}. Check inputs or adjust filters.</p>`; 
+                dom.routeDetailsContainer.innerHTML = `<h2 class="text-lg font-semibold text-white">No Route Found</h2><p class="text-yellow-400">A path could not be found. Check inputs or adjust filters.</p>`; 
             }
             drawMap(); 
         }
+        // --- END MODIFIED ---
 
         function toggleSidePanel() {
             const isExpanded = dom.menuButton.getAttribute('aria-expanded') === 'true';
@@ -536,6 +660,13 @@
             calculatedPathNodes = []; 
             calculatedPathLegs = []; 
             dom.routeDetailsContainer.innerHTML = ''; 
+            
+            // Clear inputs
+            dom.startSystemInput.value = '';
+            dom.endSystemInput.value = '';
+            // Remove waypoints
+            dom.waypointsContainer.innerHTML = '';
+            
             drawMap(); 
         } 
         function resizeCanvas() { if(dom.canvas.parentElement.clientWidth > 0){ dom.canvas.width = dom.canvas.clientWidth; dom.canvas.height = dom.canvas.clientHeight; if(dom.canvas.width > 0) drawMap(); } }
@@ -904,32 +1035,13 @@
             dom.menuButton.addEventListener('click', toggleSidePanel);
             dom.centerMeButton.addEventListener('click', centerOnMyLocation); 
             
+            // --- MODIFIED: Event listeners for dynamic route form ---
+            dom.addWaypointBtn.addEventListener('click', addWaypointInput);
             dom.routeForm.addEventListener('submit', (e) => {
                 e.preventDefault();
-                const startVal = dom.startSystemInput.value.trim();
-                const endVal = dom.endSystemInput.value.trim();
-                const parseInput = (val) => {
-                    if (!val) return null; 
-                    if (val.match(/^#\d+(\.\d+)?$/)) { 
-                        const pos = parseFloat(val.substring(1)); 
-                        return !isNaN(pos) ? `pos:${pos}` : null; 
-                    }
-                    const system = Object.values(systems).find(s => 
-                        (s.name && s.name.toLowerCase() === val.toLowerCase()) || 
-                        (s.position && `#${s.position}` === val)
-                    );
-                    return system ? `sys:${system.id}` : null;
-                };
-                const startId = parseInput(startVal);
-                const endId = parseInput(endVal);
-                if (startId && endId) { findPath(startId, endId); } 
-                else { 
-                    dom.routeDetailsContainer.innerHTML = `<p class="text-red-400">Could not find one or both locations. Please use a known system name or format coordinates as #123.45</p>`; 
-                    calculatedPathNodes = []; 
-                    calculatedPathLegs = [];
-                    drawMap();
-                }
+                findPath(); // findPath now reads DOM directly
             });
+            // --- END MODIFIED ---
 
             dom.searchForm.addEventListener('submit', (e) => {
                 e.preventDefault();
