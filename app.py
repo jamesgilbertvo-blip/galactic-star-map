@@ -161,7 +161,6 @@ def setup_database_if_needed():
 
     conn.close()
     print("Database setup and migration check complete.")
-# --- END MODIFIED ---
 
 
 # --- Admin Decorator & Utilities ---
@@ -247,7 +246,6 @@ def bulk_add_systems(systems_list, faction_id, cursor, pg_compat, param):
     return len(links_to_insert)
 
 # --- ROUTES ---
-# --- MODIFIED: /api/sync with Priority 1 Check ---
 @app.route('/api/sync', methods=['POST'])
 def sync_data():
     if 'user_id' not in session or session.get('is_developer'): return jsonify({'error': 'Not authenticated or developer accounts cannot sync'}), 401
@@ -405,7 +403,9 @@ def sync_data():
                  continue
 
         if not current_system_id or current_sys_details is None or current_sys_pos_decimal is None:
-              return jsonify({'message': 'Could not process current system data from API response.'}), 500
+              # This will be hit if the only system in the API call was negative and was skipped
+              print("Sync failed: No valid current system could be processed.", file=sys.stderr)
+              return jsonify({'message': 'Could not process current system data. It might have an invalid position.'}), 500
 
         # Now handle other discovered systems
         all_nearby_systems = {} # system_id -> {system_id, system_name, system_position}
@@ -526,7 +526,6 @@ def sync_data():
         return jsonify({'error': f'An internal error occurred during sync: {e}'}), 500
     finally:
         if conn: conn.close()
-# --- END MODIFIED ---
         
 @app.route('/register', methods=['POST'])
 def register():
@@ -1026,17 +1025,22 @@ def get_systems_data():
     conn.close()
     return jsonify({'systems': systems_dict, 'wormholes': visible_wormholes})
 
-# --- MODIFIED: /api/path with NEW catapult logic ---
+# --- MODIFIED: /api/path with NEW catapult logic AND hostile avoidance ---
 @app.route('/api/path', methods=['POST'])
 def calculate_path():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
     data = request.get_json(); start_input, end_input = data.get('start_id'), data.get('end_id')
     avoid_slow_regions = data.get('avoid_slow_regions', False)
+    
+    # --- NEW: Get avoid_hostile flag ---
+    avoid_hostile = data.get('avoid_hostile', False)
+    # --- END NEW ---
+
     slow_effect_name = "Null Space Decay" # Define the slow effect name
     penalty_multiplier = 100 # Define the penalty multiplier
     
     if not start_input or not end_input: return jsonify({'error': 'start_id and end_id are required'}), 400
-    conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?';
+    conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
     user_faction_id = session.get('faction_id')
     relationships = {}
     if user_faction_id:
@@ -1123,6 +1127,18 @@ def calculate_path():
                                  (neighbor_sys.get('region_name') in slow_region_names)
                 if is_slow_travel:
                     cost = sublight_dist * penalty_multiplier # Apply penalty
+
+            # --- NEW: Apply hostile system penalty ---
+            if avoid_hostile:
+                current_owner = current_sys.get('owner')
+                neighbor_owner = neighbor_sys.get('owner')
+                
+                is_hostile = (current_owner is not None and relationships.get(current_owner) == 'war') or \
+                             (neighbor_owner is not None and relationships.get(neighbor_owner) == 'war')
+                
+                if is_hostile:
+                    cost = cost * penalty_multiplier # Stack penalty if already slow, or apply new one
+            # --- END NEW ---
 
             id_pair = tuple(sorted((current_id, neighbor_id)))
             

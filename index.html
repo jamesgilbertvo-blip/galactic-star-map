@@ -116,13 +116,19 @@
                     <p id="sync-status" class="text-sm text-center text-gray-400 mt-2 h-4" aria-live="assertive"></p>
                 </div>
                 <form id="route-form" class="space-y-4">
-                    <input type="text" id="start-system-input" list="system-list" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="Start System or #Position...">
-                    <input type="text" id="end-system-input" list="system-list" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="End System or #Position...">
+                    <input type="text" id="start-system-input" list="system-list" class="w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="Start System or #Position...">
+                    <input type="text" id="end-system-input" list="system-list" class="w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="End System or #Position...">
                     <datalist id="system-list"></datalist>
-                    <div class="flex items-center pt-2">
-                        <input id="filter-avoid-slow" type="checkbox" class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
-                        <label for="filter-avoid-slow" class="ml-2 block text-sm text-gray-300">Avoid Slow Sublight Regions</label>
-                    </div>
+                    <div class="space-y-2 pt-2">
+                        <div class="flex items-center">
+                            <input id="filter-avoid-slow" type="checkbox" class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
+                            <label for="filter-avoid-slow" class="ml-2 block text-sm text-gray-300">Avoid Slow Sublight Regions</label>
+                        </div>
+                        <div class="flex items-center">
+                            <input id="filter-avoid-hostile" type="checkbox" class="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500">
+                            <label for="filter-avoid-hostile" class="ml-2 block text-sm text-gray-300">Avoid Hostile Systems</label>
+                        </div>
+                        </div>
                     <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-md">Find Shortest Path</button>
                 </form>
                 <div id="route-details" aria-live="polite" class="space-y-2"></div>
@@ -130,7 +136,7 @@
                 <div class="border-t border-gray-700 pt-4 space-y-4">
                     <h3 class="text-lg font-semibold text-white">Search & Filters</h3>
                     <form id="search-form" class="space-y-2">
-                        <input type="text" id="search-input" list="system-list" class="w-full bg-gray-700 border border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="Find & Center on System...">
+                        <input type="text" id="search-input" list="system-list" class="w-full bg-gray-700 border-gray-600 rounded-md py-2 px-3 text-white focus:outline-none focus:ring-indigo-500" placeholder="Find & Center on System...">
                         <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md text-sm">Search</button>
                     </form>
                     <div class="space-y-2">
@@ -214,6 +220,7 @@
             filterCatapults: document.getElementById('filter-catapults'),
             filterWormholes: document.getElementById('filter-wormholes'),
             filterAvoidSlow: document.getElementById('filter-avoid-slow'), 
+            filterAvoidHostile: document.getElementById('filter-avoid-hostile'), // NEW
             bulkSyncButton: document.getElementById('bulk-sync-button'),
             bulkSyncText: document.getElementById('bulk-sync-text'),
             centerMeButton: document.getElementById('center-me-button')
@@ -331,6 +338,7 @@
 
         async function findPath(startId, endId) { 
             const avoidSlow = dom.filterAvoidSlow.checked; 
+            const avoidHostile = dom.filterAvoidHostile.checked; // NEW
             dom.routeDetailsContainer.innerHTML = '<p class="text-gray-400">Calculating route...</p>'; 
             try {
                 const r = await apiFetch('/api/path', { 
@@ -339,7 +347,8 @@
                     body: JSON.stringify({ 
                         start_id: startId, 
                         end_id: endId,
-                        avoid_slow_regions: avoidSlow 
+                        avoid_slow_regions: avoidSlow,
+                        avoid_hostile: avoidHostile // Send flag
                     }), 
                 }); 
                 const d = await r.json();
@@ -402,18 +411,15 @@
             dom.endSystemInput.value = '';
             
             if (calculatedPathLegs.length > 0 && result.distance != null) {
-                // --- MODIFIED: Calculate counts for summary ---
                 const counts = { sublight: 0, catapult: 0, catapult_sublight: 0, wormhole: 0 };
                 calculatedPathLegs.forEach(leg => {
                     if (counts[leg.method] !== undefined) {
                         counts[leg.method]++;
                     } else {
-                         // Handle edge case if method name changes later
                         counts.sublight++; 
                     }
                 });
 
-                // Build summary string
                 const summaryParts = [];
                 if (counts.catapult > 0) summaryParts.push(`${counts.catapult} Catapult`);
                 if (counts.catapult_sublight > 0) summaryParts.push(`${counts.catapult_sublight} Catapult+Sublight`);
@@ -421,11 +427,10 @@
                 if (counts.sublight > 0) summaryParts.push(`${counts.sublight} Sublight`);
                 
                 const summaryString = `<strong>Total Jumps: ${calculatedPathLegs.length}</strong> (${summaryParts.join(', ')})`;
-                // --- END MODIFIED ---
 
                 let html = `<div class="flex justify-between items-center"><h2 class="text-lg font-semibold text-white">Route: ${startInputVal} to ${endInputVal}</h2><button id="clear-route-button" class="text-sm text-gray-400 hover:text-white focus:outline-none">&times; Clear</button></div>`;
                 html += `<p class="text-sm text-gray-400">Total Distance: ${result.distance.toFixed(2)}</p>`;
-                html += `<p class="text-xs text-gray-500 mb-2">${summaryString}</p>`; // Add summary here
+                html += `<p class="text-xs text-gray-500 mb-2">${summaryString}</p>`; 
                 html += `<ol class="mt-2 space-y-2 text-sm max-h-60 overflow-y-auto pr-2">`;
                 
                 const getDisplayName = (node) => {
@@ -570,44 +575,7 @@
             ctx.scale(viewTransform.scale, viewTransform.scale);
             
             const systemPositions = Object.values(systems).map(s => parseFloat(s.position)).filter(p => !isNaN(p));
-            const maxPos = systemPositions.length > 0 ? Math.max(...systemPositions) : 0;
-            
-            // Draw spiral guide
-            if(maxPos > 0){ 
-                ctx.strokeStyle='rgba(75,85,99,0.2)';
-                ctx.lineWidth=1/viewTransform.scale;
-                ctx.beginPath();
-                const s=1;
-                ctx.moveTo(0,0);
-                for(let p=s; p<=maxPos*1.1; p+=s) ctx.lineTo(getSpiralPoint(p).x, getSpiralPoint(p).y);
-                ctx.stroke();
-            }
-            
-            // --- MODIFIED: Draw Region Boundary Tick Marks ---
-            // Draw tick marks every 50 units
-            //if (maxPos > 50) {
-              //   ctx.lineWidth = 1 / viewTransform.scale;
-               //  ctx.strokeStyle = 'rgba(156, 163, 175, 0.4)'; // light gray, faint
-               //  const tickSize = 4 / viewTransform.scale; // Length of tick on each side
-                 
-               //  for (let p = 50; p <= maxPos * 1.1; p += 50) {
-               //      const p1 = getSpiralPoint(p);
-                     // Calculate approximation of tangent vector by looking slightly ahead
-               //      const p2 = getSpiralPoint(p + 0.1); 
-               //      const dx = p2.x - p1.x;
-               //      const dy = p2.y - p1.y;
-               //      const angle = Math.atan2(dy, dx);
-                     
-                     // Draw perpendicular line
-                //     ctx.beginPath();
-                     // -sin, cos is 90 degree rotation
-                //     ctx.moveTo(p1.x - tickSize * Math.sin(angle), p1.y + tickSize * Math.cos(angle));
-                //     ctx.lineTo(p1.x + tickSize * Math.sin(angle), p1.y - tickSize * Math.cos(angle));
-                //     ctx.stroke();
-               //  }
-           // }
-            // --- END MODIFIED ---
-
+            if(systemPositions.length > 0){ let maxPos=Math.max(...systemPositions); if(maxPos>0){ ctx.strokeStyle='rgba(75,85,99,0.2)';ctx.lineWidth=1/viewTransform.scale;ctx.beginPath();const s=1;ctx.moveTo(0,0);for(let p=s;p<=maxPos*1.1;p+=s)ctx.lineTo(getSpiralPoint(p).x,getSpiralPoint(p).y);ctx.stroke();}}
             
             if (filterShowCatapults) {
                 Object.values(systems).forEach(sys => { 
