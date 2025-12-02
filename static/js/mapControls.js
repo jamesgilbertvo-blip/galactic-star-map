@@ -44,18 +44,20 @@ const findSystemUnderCursor = (worldX, worldY, systems) => {
     let minDistanceSq = Infinity;
     const clickToleranceSq = (10 / state.viewTransform.scale) ** 2; 
 
-    Object.values(systems).forEach(sys => {
-        if (typeof sys.x === 'number' && typeof sys.y === 'number') {
-            const dx = worldX - sys.x;
-            const dy = worldY - sys.y;
-            const distanceSq = dx * dx + dy * dy;
+    if (systems) {
+        Object.values(systems).forEach(sys => {
+            if (typeof sys.x === 'number' && typeof sys.y === 'number') {
+                const dx = worldX - sys.x;
+                const dy = worldY - sys.y;
+                const distanceSq = dx * dx + dy * dy;
 
-            if (distanceSq < clickToleranceSq && distanceSq < minDistanceSq) {
-                minDistanceSq = distanceSq;
-                nearest = sys;
+                if (distanceSq < clickToleranceSq && distanceSq < minDistanceSq) {
+                    minDistanceSq = distanceSq;
+                    nearest = sys;
+                }
             }
-        }
-    });
+        });
+    }
     return nearest;
 };
 
@@ -81,19 +83,16 @@ const findIntelMarkerUnderCursor = (worldX, worldY, markers) => {
     return nearest;
 };
 
-// --- Event Handlers ---
+// --- Mouse Event Handlers ---
 
 const handleMouseDown = (e) => {
-    // Allow panning if Left Click (0) OR if button is undefined (Touch event)
-    if (e.button !== 0 && e.button !== undefined) return;
+    if (e.button !== 0) return; // Only Left Click for panning
 
     e.preventDefault();
     
     isPanning = true;
     canvas.style.cursor = 'grabbing';
     lastPoint = getEventCoordinates(canvas, e);
-    
-    // Right click is handled by 'contextmenu' listener
 };
 
 const handleMouseMove = (e) => {
@@ -126,8 +125,7 @@ const handleMouseMove = (e) => {
 };
 
 const handleMouseUp = (e) => {
-    // Allow finish if Left Click (0) OR if button is undefined (Touch event)
-    if (e.button !== 0 && e.button !== undefined) return;
+    if (e.button !== 0) return;
 
     e.preventDefault();
     isPanning = false;
@@ -161,11 +159,9 @@ const handleMouseClick = (e) => {
 const handleWheel = (e) => {
     e.preventDefault();
     
-    // --- ZOOM FIX: Use multiplicative scaling for speed ---
-    const scaleAmount = 1.1; // Adjust this for speed
+    const scaleAmount = 1.1; 
     const point = getEventCoordinates(canvas, e);
     
-    // Calculate world point BEFORE zoom
     const wX = (point.x - state.viewTransform.translateX) / state.viewTransform.scale;
     const wY = (point.y - state.viewTransform.translateY) / state.viewTransform.scale;
 
@@ -175,10 +171,8 @@ const handleWheel = (e) => {
         state.viewTransform.scale /= scaleAmount; // Zoom Out
     }
 
-    // Clamp scale
     state.viewTransform.scale = Math.min(Math.max(state.viewTransform.scale, 0.05), 10);
 
-    // Adjust translate so the world point remains under mouse
     state.viewTransform.translateX = point.x - (wX * state.viewTransform.scale);
     state.viewTransform.translateY = point.y - (wY * state.viewTransform.scale);
 
@@ -195,58 +189,59 @@ const handleContextMenu = (e) => {
     callbacks.onContextMenu(e.clientX, e.clientY, worldCoords.x, worldCoords.y, existingIntel);
 };
 
-// --- Public Setup Function ---
+// --- Touch Event Handlers (Dedicated) ---
 
-export const setupMapInteractions = (canvasEl, mapData, appState, mapSettings, eventCallbacks) => {
-    canvas = canvasEl;
-    data = mapData;
-    state = appState;
-    settings = mapSettings;
-    callbacks = eventCallbacks;
-
-    canvas.addEventListener('mousedown', handleMouseDown);
-    canvas.addEventListener('mousemove', handleMouseMove);
-    canvas.addEventListener('mouseup', handleMouseUp);
-    canvas.addEventListener('click', handleMouseClick);
-    canvas.addEventListener('wheel', handleWheel, { passive: false });
-    canvas.addEventListener('contextmenu', handleContextMenu);
+const handleTouchStart = (e) => {
+    // Single Touch - Pan / Long Press
+    if (e.touches.length === 1) {
+        // Don't prevent default immediately, might be a tap or UI interaction
+        // e.preventDefault(); // Removing this lets clicks pass through if needed, but careful with scrolling.
+        
+        isPanning = true;
+        lastPoint = getEventCoordinates(canvas, e);
+        
+        // Note: Long press logic for mobile context menu is handled in UI layer or via a separate timer
+        // currently integrated in index.html's listeners, but simple pan starts here.
+    }
     
-    // Touch Adapters
-    canvas.addEventListener('touchstart', (e) => { 
-        if (e.touches.length === 1) handleMouseDown(e.touches[0]); 
-        if (e.touches.length === 2) handleTouchStart(e);
-    }, { passive: false });
-    
-    canvas.addEventListener('touchmove', (e) => { 
-        if (e.touches.length === 1) handleMouseMove(e.touches[0]);
-        if (e.touches.length === 2) handleTouchMove(e);
-    }, { passive: false });
-    
-    canvas.addEventListener('touchend', (e) => {
-        if (e.touches.length === 0) handleMouseUp(e.changedTouches[0]);
-        if (e.touches.length < 2) handleTouchEnd(e);
-    });
-
-    // Pinch Zoom logic
-    const handleTouchStart = (e) => {
+    // Multi Touch - Pinch Zoom
+    if (e.touches.length === 2) {
         e.preventDefault();
+        isPanning = false; // Stop panning
         touchPoints = [
             getEventCoordinates(canvas, { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY }), 
             getEventCoordinates(canvas, { clientX: e.touches[1].clientX, clientY: e.touches[1].clientY })
         ];
         pinchDistance = Math.hypot(touchPoints[0].x - touchPoints[1].x, touchPoints[0].y - touchPoints[1].y);
-    };
+    }
+};
 
-    const handleTouchMove = (e) => {
-        e.preventDefault();
+const handleTouchMove = (e) => {
+    e.preventDefault(); // Always prevent scroll while touching canvas
+
+    // Single Touch - Panning
+    if (e.touches.length === 1 && isPanning) {
+        const currentPoint = getEventCoordinates(canvas, e);
+        const dx = currentPoint.x - lastPoint.x;
+        const dy = currentPoint.y - lastPoint.y;
+        state.viewTransform.translateX += dx;
+        state.viewTransform.translateY += dy;
+        lastPoint = currentPoint;
+        callbacks.draw();
+    }
+
+    // Multi Touch - Pinch Zoom
+    if (e.touches.length === 2 && pinchDistance) {
         const p1 = getEventCoordinates(canvas, { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
         const p2 = getEventCoordinates(canvas, { clientX: e.touches[1].clientX, clientY: e.touches[1].clientY });
         const currentPinchDistance = Math.hypot(p1.x - p2.x, p1.y - p2.y);
         
-        if (pinchDistance) {
+        if (pinchDistance > 0) {
             const zoomFactor = currentPinchDistance / pinchDistance;
+            
             const centerPointX = (touchPoints[0].x + touchPoints[1].x) / 2;
             const centerPointY = (touchPoints[0].y + touchPoints[1].y) / 2;
+
             const wX = (centerPointX - state.viewTransform.translateX) / state.viewTransform.scale;
             const wY = (centerPointY - state.viewTransform.translateY) / state.viewTransform.scale;
 
@@ -261,12 +256,46 @@ export const setupMapInteractions = (canvasEl, mapData, appState, mapSettings, e
         }
         callbacks.draw();
         localStorage.setItem('mapViewTransform', JSON.stringify(state.viewTransform));
-    };
+    }
+};
 
-    const handleTouchEnd = () => {
+const handleTouchEnd = (e) => {
+    if (e.touches.length === 0) {
+        isPanning = false;
         pinchDistance = null;
         touchPoints = [];
-    };
+        localStorage.setItem('mapViewTransform', JSON.stringify(state.viewTransform));
+        
+        // Handle Tap (Simulate click if minimal movement) - Logic handled via 'click' listener usually,
+        // but on mobile, 'click' might fire after touchend.
+        // For now, we rely on the standard 'click' event listeners or separate tap logic if needed.
+    }
+};
+
+
+// --- Public Setup Function ---
+
+export const setupMapInteractions = (canvasEl, mapData, appState, mapSettings, eventCallbacks) => {
+    canvas = canvasEl;
+    data = mapData;
+    state = appState;
+    settings = mapSettings;
+    callbacks = eventCallbacks;
+
+    // Mouse
+    canvas.addEventListener('mousedown', handleMouseDown);
+    canvas.addEventListener('mousemove', handleMouseMove);
+    canvas.addEventListener('mouseup', handleMouseUp);
+    canvas.addEventListener('mouseleave', handleMouseUp);
+    canvas.addEventListener('click', handleMouseClick);
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+    canvas.addEventListener('contextmenu', handleContextMenu);
+    
+    // Touch
+    canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+    canvas.addEventListener('touchend', handleTouchEnd);
+    canvas.addEventListener('touchcancel', handleTouchEnd);
 };
 
 export const centerOnLocationWithPing = (canvasEl, appState, system, eventCallbacks) => {

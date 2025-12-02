@@ -45,13 +45,6 @@ const drawSublight = (ctx, viewTransform, posA, posB) => {
 
 /**
  * Main Drawing Function
- * @param {CanvasRenderingContext2D} ctx 
- * @param {HTMLCanvasElement} canvas 
- * @param {Object} viewTransform - { scale, translateX, translateY }
- * @param {Object} data - { systems, wormholes, intelMarkers }
- * @param {Object} state - { pathNodes, pathLegs, hoveredSystem, highlightedId, toggledIds, pingAnim, newlySyncedIds }
- * @param {Object} settings - { showCatapults, showWormholes, showUnclaimed }
- * @param {number} dpr - Device Pixel Ratio
  */
 export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr = 1) => {
     if (!canvas.width || !ctx) return;
@@ -65,6 +58,17 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
     ctx.scale(viewTransform.scale, viewTransform.scale);
 
     const isLowDetail = viewTransform.scale < LOD_THRESHOLD;
+
+    // --- PRE-CALCULATE IMPORTANT IDS ---
+    // Create a set of IDs for systems that have wormholes so we can keep them visible
+    const wormholeSystemIds = new Set();
+    if (data.wormholes) {
+        data.wormholes.forEach(wh => {
+            wormholeSystemIds.add(wh[0]);
+            wormholeSystemIds.add(wh[1]);
+        });
+    }
+    // ------------------------------------
 
     // 2. Draw Spiral Guide
     const systemPositions = Object.values(data.systems).map(s => parseFloat(s.position)).filter(p => !isNaN(p));
@@ -85,6 +89,7 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
     }
 
     // 3. Draw Catapult Ranges
+    // MODIFIED: Ranges are now always drawn if enabled, regardless of Zoom level, for context.
     if (settings.showCatapults) {
         Object.values(data.systems).forEach(sys => {
             const sysPos = parseFloat(sys.position);
@@ -92,11 +97,11 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
             if (isNaN(sysPos) || isNaN(sysRadius) || sysRadius <= 0) return;
 
             const isToggled = state.toggledIds.has(String(sys.id));
+            
+            // Logic: Highlight if toggled, highlighted, or hovered
             const isImportant = isToggled || 
                                 (state.highlightedId !== null && String(sys.id) === String(state.highlightedId)) || 
                                 (state.hoveredSystem && state.hoveredSystem.id === sys.id);
-
-            if (isLowDetail && !isImportant) return;
 
             if (!isToggled) {
                 let rangeColor = 'rgba(132, 204, 22, 0.3)';
@@ -124,13 +129,12 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
         });
     }
 
-    // 4. Draw Wormholes (FIXED)
+    // 4. Draw Wormholes
     if (settings.showWormholes) {
         ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)';
         ctx.lineWidth = 1 / viewTransform.scale;
         ctx.setLineDash([5 / viewTransform.scale, 5 / viewTransform.scale]);
         data.wormholes.forEach(wh => {
-            // Array format: [system_a_id, system_b_id]
             const sA = data.systems[wh[0]]; 
             const sB = data.systems[wh[1]];
             
@@ -182,7 +186,6 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
                 const coordsA = { x: sA.x, y: sA.y };
                 const coordsV = getSpiralPoint(virtualNodePos);
 
-                // Green
                 ctx.strokeStyle = '#a3e635';
                 ctx.lineWidth = 3 / viewTransform.scale;
                 ctx.beginPath();
@@ -190,10 +193,8 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
                 ctx.lineTo(coordsV.x, coordsV.y);
                 ctx.stroke();
 
-                // Yellow
                 drawSublight(ctx, viewTransform, virtualNodePos, posB);
 
-                // Dot
                 ctx.fillStyle = '#f59e0b';
                 ctx.strokeStyle = '#1f2937';
                 ctx.lineWidth = 1 / viewTransform.scale;
@@ -208,7 +209,7 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
         });
     }
 
-    // 6. Draw Systems (Dots)
+    // 6. Draw Systems (Dots) - MODIFIED LOD
     Object.values(data.systems).forEach(sys => {
         if (typeof sys.x !== 'number' || typeof sys.y !== 'number') return;
         
@@ -217,7 +218,14 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
         const isNewlySynced = state.newlySyncedIds.has(String(sys.id));
         const isSearched = state.highlightedId === sys.id;
 
-        const isImportant = isOnPath || isHovered || isSearched || isNewlySynced;
+        // --- MODIFIED LOD LOGIC ---
+        // Always show: Path, Hover, Search, New Sync
+        // PLUS: Catapult Owners (sys.catapult_radius > 0)
+        // PLUS: Wormhole Endpoints (in wormholeSystemIds)
+        const isImportant = isOnPath || isHovered || isSearched || isNewlySynced || 
+                            (sys.catapult_radius > 0) || 
+                            wormholeSystemIds.has(sys.id);
+
         if (isLowDetail && !isImportant) return;
 
         ctx.fillStyle = isOnPath || isSearched ? '#f59e0b' : '#38bdf8';
@@ -246,7 +254,7 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
         }
     });
 
-    // 8. Draw System Labels
+    // 8. Draw System Labels - MODIFIED LOD
     Object.values(data.systems).forEach(sys => {
         if (typeof sys.x !== 'number' || typeof sys.y !== 'number') return;
         
@@ -254,7 +262,11 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
         const isHovered = state.hoveredSystem && state.hoveredSystem.id === sys.id;
         const isSearched = state.highlightedId === sys.id;
 
-        const isImportant = isOnPath || isHovered || isSearched;
+        // Keep labels consistent with dots for importance
+        const isImportant = isOnPath || isHovered || isSearched || 
+                            (sys.catapult_radius > 0) || 
+                            wormholeSystemIds.has(sys.id);
+
         if (isLowDetail && !isImportant) return;
 
         let labelText = sys.name;
@@ -335,10 +347,10 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
                 const size = Math.max(6, 12 / viewTransform.scale);
 
                 if (marker.type === "Mining Rich") {
-                    ctx.fillStyle = '#22d3ee'; 
+                    ctx.fillStyle = '#22d3ee'; // Cyan
                     ctx.fillRect(-size / 2, -size / 2, size, size);
                 } else if (marker.type === "Hazard") {
-                    ctx.fillStyle = '#fb923c'; 
+                    ctx.fillStyle = '#fb923c'; // Orange
                     ctx.beginPath();
                     ctx.moveTo(0, -size / 2);
                     ctx.lineTo(size / 2, size / 2);
@@ -346,7 +358,7 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
                     ctx.closePath();
                     ctx.fill();
                 } else if (marker.type === "Point of Interest") {
-                    ctx.fillStyle = '#c084fc'; 
+                    ctx.fillStyle = '#c084fc'; // Purple
                     ctx.beginPath();
                     ctx.arc(0, 0, size / 2, 0, Math.PI * 2);
                     ctx.fill();
