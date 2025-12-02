@@ -125,20 +125,43 @@ function setupGlobalListeners() {
 
 function draw() {
     const ctx = UI.elements.canvas.getContext('2d');
+    // Pass the DPR (Device Pixel Ratio) from state, defaulting to 1
+    const dpr = state.dpr || 1;
+    
     MapRenderer.drawMap(
         ctx, 
         UI.elements.canvas, 
         state.viewTransform, 
         { systems: state.systems, wormholes: state.wormholes, intelMarkers: state.intelMarkers }, 
         state, 
-        settings
+        settings,
+        dpr // <--- Pass DPR here
     );
 }
 
 function resizeCanvas() {
-    if (UI.elements.canvas.parentElement.clientWidth > 0) {
-        UI.elements.canvas.width = UI.elements.canvas.parentElement.clientWidth;
-        UI.elements.canvas.height = UI.elements.canvas.parentElement.clientHeight;
+    const parent = UI.elements.canvas.parentElement;
+    if (parent.clientWidth > 0) {
+        // 1. Get the display size (CSS pixels)
+        const displayWidth = parent.clientWidth;
+        const displayHeight = parent.clientHeight;
+
+        // 2. Check for High-DPI (Retina) scaling
+        // Default to 1 if not found
+        const dpr = window.devicePixelRatio || 1;
+
+        // 3. Set the internal resolution (Real pixels)
+        UI.elements.canvas.width = Math.floor(displayWidth * dpr);
+        UI.elements.canvas.height = Math.floor(displayHeight * dpr);
+
+        // 4. Set the CSS display size explicitly
+        UI.elements.canvas.style.width = `${displayWidth}px`;
+        UI.elements.canvas.style.height = `${displayHeight}px`;
+
+        // 5. Store the scale in the state so MapRenderer can use it
+        // We add a new property 'dpr' to our state object
+        state.dpr = dpr;
+
         draw();
     }
 }

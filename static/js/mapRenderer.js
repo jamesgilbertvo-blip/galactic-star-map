@@ -51,13 +51,18 @@ const drawSublight = (ctx, viewTransform, posA, posB) => {
  * @param {Object} state - { pathNodes, pathLegs, hoveredSystem, highlightedId, toggledIds, pingAnim, newlySyncedIds }
  * @param {Object} settings - { showCatapults, showWormholes, showUnclaimed }
  */
-export const drawMap = (ctx, canvas, viewTransform, data, state, settings) => {
+export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr = 1) => {
     if (!canvas.width || !ctx) return;
 
     // 1. Setup Canvas
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save();
+    // --- NEW: Scale by Device Pixel Ratio first ---
+    ctx.scale(dpr, dpr); 
+    // ---------------------------------------------
+
+    // Apply user's Pan/Zoom transform
     ctx.translate(viewTransform.translateX, viewTransform.translateY);
     ctx.scale(viewTransform.scale, viewTransform.scale);
 
