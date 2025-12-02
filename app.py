@@ -14,7 +14,9 @@ import decimal # Use decimal for precise position comparisons
 
 # --- CONFIGURATION ---
 DATABASE_URL = os.environ.get('DATABASE_URL')
-STATIC_DIR = os.path.dirname(os.path.abspath(__file__))
+# Point to the new 'static' folder
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(BASE_DIR, 'static')
 
 # --- ENCRYPTION SETUP ---
 ENCRYPTION_KEY = os.environ.get('ENCRYPTION_KEY')
