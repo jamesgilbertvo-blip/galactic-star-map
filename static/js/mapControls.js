@@ -18,10 +18,13 @@ let touchPoints = [];
 const getEventCoordinates = (canvas, e) => {
     const rect = canvas.getBoundingClientRect();
     let x, y;
+    // If it's a raw TouchEvent (has touches array)
     if (e.touches && e.touches.length > 0) {
         x = e.touches[0].clientX - rect.left;
         y = e.touches[0].clientY - rect.top;
-    } else {
+    } 
+    // If it's a MouseEvent or a single Touch object passed from adapter
+    else {
         x = e.clientX - rect.left;
         y = e.clientY - rect.top;
     }
@@ -61,6 +64,8 @@ const findIntelMarkerUnderCursor = (worldX, worldY, markers) => {
     let minDistanceSq = Infinity;
     const clickToleranceSq = (15 / state.viewTransform.scale) ** 2;
 
+    if (!markers) return null;
+
     markers.forEach(marker => {
         if (typeof marker.x === 'number' && typeof marker.y === 'number') {
             const dx = worldX - marker.x;
@@ -79,20 +84,16 @@ const findIntelMarkerUnderCursor = (worldX, worldY, markers) => {
 // --- Event Handlers ---
 
 const handleMouseDown = (e) => {
-    // Allow right-click default context menu if strictly desired, 
-    // but we are overriding it for Intel, so preventDefault is mostly correct.
-    // However, we must allow input focus changes.
-    if (e.target !== canvas) return;
+    // Allow panning if Left Click (0) OR if button is undefined (Touch event)
+    if (e.button !== 0 && e.button !== undefined) return;
+
     e.preventDefault();
     
-    if (e.button === 0) { // Left click
-        isPanning = true;
-        canvas.style.cursor = 'grabbing';
-        lastPoint = getEventCoordinates(canvas, e);
-    }
-    if (e.button === 2) { // Right click
-        handleContextMenu(e);
-    }
+    isPanning = true;
+    canvas.style.cursor = 'grabbing';
+    lastPoint = getEventCoordinates(canvas, e);
+    
+    // Right click is handled by 'contextmenu' listener
 };
 
 const handleMouseMove = (e) => {
@@ -125,11 +126,12 @@ const handleMouseMove = (e) => {
 };
 
 const handleMouseUp = (e) => {
+    // Allow finish if Left Click (0) OR if button is undefined (Touch event)
+    if (e.button !== 0 && e.button !== undefined) return;
+
     e.preventDefault();
-    if (e.button === 0) { // Left click release
-        isPanning = false;
-        canvas.style.cursor = state.hoveredSystem ? 'pointer' : 'grab';
-    }
+    isPanning = false;
+    canvas.style.cursor = state.hoveredSystem ? 'pointer' : 'grab';
 };
 
 const handleMouseClick = (e) => {
@@ -158,17 +160,22 @@ const handleMouseClick = (e) => {
 
 const handleWheel = (e) => {
     e.preventDefault();
-    const delta = e.deltaY * -0.001;
-    const zoomFactor = 1 + delta;
-
+    
+    // --- ZOOM FIX: Use multiplicative scaling for speed ---
+    const scaleAmount = 1.1; // Adjust this for speed
     const point = getEventCoordinates(canvas, e);
     
     // Calculate world point BEFORE zoom
     const wX = (point.x - state.viewTransform.translateX) / state.viewTransform.scale;
     const wY = (point.y - state.viewTransform.translateY) / state.viewTransform.scale;
 
-    // Apply zoom
-    state.viewTransform.scale *= zoomFactor;
+    if (e.deltaY < 0) {
+        state.viewTransform.scale *= scaleAmount; // Zoom In
+    } else {
+        state.viewTransform.scale /= scaleAmount; // Zoom Out
+    }
+
+    // Clamp scale
     state.viewTransform.scale = Math.min(Math.max(state.viewTransform.scale, 0.05), 10);
 
     // Adjust translate so the world point remains under mouse
@@ -184,7 +191,7 @@ const handleContextMenu = (e) => {
     const point = getEventCoordinates(canvas, e);
     const worldCoords = toWorldCoords(point.x, point.y);
     
-    const existingIntel = findIntelMarkerUnderCursor(worldCoords.x, worldCoords.y, data.intelMarkers);
+    const existingIntel = findIntelMarkerUnderCursor(worldCoords.x, worldCoords.y, data.intelMarkers || []);
     callbacks.onContextMenu(e.clientX, e.clientY, worldCoords.x, worldCoords.y, existingIntel);
 };
 
@@ -204,6 +211,7 @@ export const setupMapInteractions = (canvasEl, mapData, appState, mapSettings, e
     canvas.addEventListener('wheel', handleWheel, { passive: false });
     canvas.addEventListener('contextmenu', handleContextMenu);
     
+    // Touch Adapters
     canvas.addEventListener('touchstart', (e) => { 
         if (e.touches.length === 1) handleMouseDown(e.touches[0]); 
         if (e.touches.length === 2) handleTouchStart(e);
@@ -262,9 +270,6 @@ export const setupMapInteractions = (canvasEl, mapData, appState, mapSettings, e
 };
 
 export const centerOnLocationWithPing = (canvasEl, appState, system, eventCallbacks) => {
-    // Only use DPR for centering if we are referencing screen coords, 
-    // but we are setting translation directly, so we work in Logical Pixels.
-    // However, the canvas center in logical pixels is width / dpr / 2.
     const dpr = appState.dpr || 1;
     const canvasCX = (canvasEl.width / dpr) / 2; 
     const canvasCY = (canvasEl.height / dpr) / 2;

@@ -5,6 +5,7 @@
 
 const SPIRAL_TIGHTNESS = 0.1;
 const SPIRAL_SCALE = 50;
+const LOD_THRESHOLD = 0.25; // If scale is below this, hide clutter
 
 // Helper: Calculate spiral coordinates from a linear position
 export const getSpiralPoint = (pos) => {
@@ -50,6 +51,7 @@ const drawSublight = (ctx, viewTransform, posA, posB) => {
  * @param {Object} data - { systems, wormholes, intelMarkers }
  * @param {Object} state - { pathNodes, pathLegs, hoveredSystem, highlightedId, toggledIds, pingAnim, newlySyncedIds }
  * @param {Object} settings - { showCatapults, showWormholes, showUnclaimed }
+ * @param {number} dpr - Device Pixel Ratio
  */
 export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr = 1) => {
     if (!canvas.width || !ctx) return;
@@ -58,13 +60,11 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save();
-    // --- NEW: Scale by Device Pixel Ratio first ---
-    ctx.scale(dpr, dpr); 
-    // ---------------------------------------------
-
-    // Apply user's Pan/Zoom transform
+    ctx.scale(dpr, dpr); // Handle High DPI
     ctx.translate(viewTransform.translateX, viewTransform.translateY);
     ctx.scale(viewTransform.scale, viewTransform.scale);
+
+    const isLowDetail = viewTransform.scale < LOD_THRESHOLD;
 
     // 2. Draw Spiral Guide
     const systemPositions = Object.values(data.systems).map(s => parseFloat(s.position)).filter(p => !isNaN(p));
@@ -92,13 +92,15 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
             if (isNaN(sysPos) || isNaN(sysRadius) || sysRadius <= 0) return;
 
             const isToggled = state.toggledIds.has(String(sys.id));
+            const isImportant = isToggled || 
+                                (state.highlightedId !== null && String(sys.id) === String(state.highlightedId)) || 
+                                (state.hoveredSystem && state.hoveredSystem.id === sys.id);
+
+            if (isLowDetail && !isImportant) return;
+
             if (!isToggled) {
                 let rangeColor = 'rgba(132, 204, 22, 0.3)';
-                // Check if this system is the highlighted one
-                if (state.highlightedId !== null && String(sys.id) === String(state.highlightedId)) {
-                     rangeColor = 'rgba(163, 230, 57, 0.9)';
-                } else if (state.hoveredSystem && state.hoveredSystem.id === sys.id) {
-                     // Also highlight if hovered
+                if (isImportant) {
                      rangeColor = 'rgba(163, 230, 57, 0.9)';
                 }
 
@@ -122,14 +124,16 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
         });
     }
 
-    // 4. Draw Wormholes
+    // 4. Draw Wormholes (FIXED)
     if (settings.showWormholes) {
         ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)';
         ctx.lineWidth = 1 / viewTransform.scale;
         ctx.setLineDash([5 / viewTransform.scale, 5 / viewTransform.scale]);
         data.wormholes.forEach(wh => {
-            const sA = data.systems[wh.system_a_id];
-            const sB = data.systems[wh.system_b_id];
+            // Array format: [system_a_id, system_b_id]
+            const sA = data.systems[wh[0]]; 
+            const sB = data.systems[wh[1]];
+            
             if (sA && sB && typeof sA.x === 'number' && typeof sB.x === 'number') {
                 ctx.beginPath();
                 ctx.moveTo(sA.x, sA.y);
@@ -171,7 +175,6 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
                 ctx.stroke();
 
             } else if (leg.method === 'catapult_sublight') {
-                // Split line logic
                 const catapultRadius = data.systems[sA.id]?.catapult_radius || 0;
                 const sign = Math.sign(posB - posA);
                 const virtualNodePos = posA + (sign * catapultRadius);
@@ -179,7 +182,7 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
                 const coordsA = { x: sA.x, y: sA.y };
                 const coordsV = getSpiralPoint(virtualNodePos);
 
-                // Green part
+                // Green
                 ctx.strokeStyle = '#a3e635';
                 ctx.lineWidth = 3 / viewTransform.scale;
                 ctx.beginPath();
@@ -187,10 +190,10 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
                 ctx.lineTo(coordsV.x, coordsV.y);
                 ctx.stroke();
 
-                // Yellow part
+                // Yellow
                 drawSublight(ctx, viewTransform, virtualNodePos, posB);
 
-                // Virtual Node Dot
+                // Dot
                 ctx.fillStyle = '#f59e0b';
                 ctx.strokeStyle = '#1f2937';
                 ctx.lineWidth = 1 / viewTransform.scale;
@@ -200,7 +203,6 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
                 ctx.stroke();
 
             } else {
-                // Standard Sublight
                 drawSublight(ctx, viewTransform, posA, posB);
             }
         });
@@ -215,9 +217,11 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
         const isNewlySynced = state.newlySyncedIds.has(String(sys.id));
         const isSearched = state.highlightedId === sys.id;
 
+        const isImportant = isOnPath || isHovered || isSearched || isNewlySynced;
+        if (isLowDetail && !isImportant) return;
+
         ctx.fillStyle = isOnPath || isSearched ? '#f59e0b' : '#38bdf8';
         ctx.beginPath();
-        // Increase size if hovered/searched/path
         const radius = (isOnPath || isHovered || isSearched ? 6 : 4) / viewTransform.scale;
         ctx.arc(sys.x, sys.y, radius, 0, Math.PI * 2);
         ctx.fill();
@@ -229,7 +233,7 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
         }
     });
 
-    // 7. Draw Virtual Node Lines (if strictly virtual nodes exist in path list)
+    // 7. Draw Virtual Node Lines
     state.pathNodes.forEach(node => {
         if (node.id.toString().startsWith('virtual')) {
             const size = 8 / viewTransform.scale;
@@ -250,6 +254,9 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
         const isHovered = state.hoveredSystem && state.hoveredSystem.id === sys.id;
         const isSearched = state.highlightedId === sys.id;
 
+        const isImportant = isOnPath || isHovered || isSearched;
+        if (isLowDetail && !isImportant) return;
+
         let labelText = sys.name;
         const isDefaultName = labelText && labelText.startsWith("System ");
         if (isDefaultName && typeof sys.position === 'string' && sys.position !== '') {
@@ -258,16 +265,16 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
             labelText = `ID: ${sys.id}`;
         }
 
-        let shouldShowLabel = (isOnPath || isHovered || isSearched || viewTransform.scale > 0.8);
-        if (isDefaultName && !settings.showUnclaimed && !isOnPath && !isHovered && !isSearched) {
+        let shouldShowLabel = (isImportant || viewTransform.scale > 0.8);
+        if (isDefaultName && !settings.showUnclaimed && !isImportant) {
             shouldShowLabel = false;
         }
 
         if (shouldShowLabel) {
-            ctx.fillStyle = (isOnPath || isHovered || isSearched) ? '#ffffff' : '#e5e7eb';
-            ctx.font = `${(isOnPath || isHovered || isSearched ? 12 : 10) / viewTransform.scale}px Inter`;
+            ctx.fillStyle = isImportant ? '#ffffff' : '#e5e7eb';
+            ctx.font = `${(isImportant ? 12 : 10) / viewTransform.scale}px Inter`;
             ctx.textAlign = 'center';
-            ctx.fillText(labelText, sys.x, sys.y - ((isOnPath || isHovered || isSearched ? 10 : 8) / viewTransform.scale));
+            ctx.fillText(labelText, sys.x, sys.y - ((isImportant ? 10 : 8) / viewTransform.scale));
         }
     });
 
@@ -302,7 +309,6 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
                 ctx.stroke();
             }
 
-            // Second echo ring
             const delay = 150;
             if (elapsed > delay) {
                 const progress2 = (elapsed - delay) / (ping.duration - delay);
@@ -329,10 +335,10 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
                 const size = Math.max(6, 12 / viewTransform.scale);
 
                 if (marker.type === "Mining Rich") {
-                    ctx.fillStyle = '#22d3ee'; // Cyan
+                    ctx.fillStyle = '#22d3ee'; 
                     ctx.fillRect(-size / 2, -size / 2, size, size);
                 } else if (marker.type === "Hazard") {
-                    ctx.fillStyle = '#fb923c'; // Orange
+                    ctx.fillStyle = '#fb923c'; 
                     ctx.beginPath();
                     ctx.moveTo(0, -size / 2);
                     ctx.lineTo(size / 2, size / 2);
@@ -340,7 +346,7 @@ export const drawMap = (ctx, canvas, viewTransform, data, state, settings, dpr =
                     ctx.closePath();
                     ctx.fill();
                 } else if (marker.type === "Point of Interest") {
-                    ctx.fillStyle = '#c084fc'; // Purple
+                    ctx.fillStyle = '#c084fc'; 
                     ctx.beginPath();
                     ctx.arc(0, 0, size / 2, 0, Math.PI * 2);
                     ctx.fill();
