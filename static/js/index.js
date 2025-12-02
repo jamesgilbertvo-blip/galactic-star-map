@@ -16,6 +16,7 @@ const state = {
     
     // View State
     viewTransform: { scale: 1, translateX: 0, translateY: 0 },
+    dpr: 1, // Device Pixel Ratio
     
     // Pathfinding State
     pathNodes: [],
@@ -24,7 +25,7 @@ const state = {
     // Interaction State
     hoveredSystem: null,
     highlightedId: null,
-    toggledIds: new Set(),
+    toggledIds: new Set(), // For showing range rings
     newlySyncedIds: new Set(),
     
     // Animation State
@@ -34,7 +35,7 @@ const state = {
     activeRouteInput: null,
 
     // Intel Context State
-    pendingIntelCoords: null
+    pendingIntelCoords: null // {x, y, system_id?, id?}
 };
 
 // --- Settings ---
@@ -55,7 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (saved) state.viewTransform = JSON.parse(saved);
     } catch (e) { console.error("Error loading view state", e); }
 
-    // 2. Setup UI Listeners
+    // 2. Setup Global Listeners (Login, Register, simple toggles)
     setupGlobalListeners();
 
     // 3. Setup Map Canvas
@@ -66,66 +67,11 @@ document.addEventListener('DOMContentLoaded', () => {
     checkLogin();
 });
 
-// --- Listener Setup ---
-
-function setupGlobalListeners() {
-    // Simple UI Toggles
-    UI.setupSimpleUIListeners({
-        onInputFocus: (input) => { state.activeRouteInput = input; },
-        onClearRoute: () => {
-            state.pathNodes = [];
-            state.pathLegs = [];
-            UI.clearRouteDisplay();
-            draw();
-        }
-    });
-
-    // --- LOGIN FORM (Moved here so it works when logged out) ---
-    UI.elements.loginForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const user = UI.elements.loginForm.username.value;
-        const pass = UI.elements.loginForm.password.value;
-        try {
-            const res = await API.login(user, pass);
-            const data = await res.json();
-            if (res.ok) {
-                UI.showMap(data);
-                await loadMapData(false);
-                setupMapInteractions(); // Initialize map controls
-            } else {
-                UI.elements.loginError.textContent = data.message;
-            }
-        } catch (err) { UI.elements.loginError.textContent = "Connection failed."; }
-    });
-
-    // --- REGISTER FORM (Added back) ---
-    UI.elements.registerForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const payload = {
-            username: UI.elements.registerForm.username.value,
-            password: UI.elements.registerForm.password.value,
-            api_key: UI.elements.registerForm.api_key.value
-        };
-        try {
-            const res = await API.register(payload);
-            const data = await res.json();
-            if (res.ok) {
-                UI.showMap(data);
-                // New user needs a fresh sync or initial data
-                draw(); 
-                setupMapInteractions();
-            } else {
-                UI.elements.registerError.textContent = data.message;
-            }
-        } catch (err) { UI.elements.registerError.textContent = "Connection failed."; }
-    });
-}
-
 // --- Core Functions ---
 
 function draw() {
     const ctx = UI.elements.canvas.getContext('2d');
-    // Pass the DPR (Device Pixel Ratio) from state, defaulting to 1
+    // Pass the DPR to the renderer
     const dpr = state.dpr || 1;
     
     MapRenderer.drawMap(
@@ -135,32 +81,28 @@ function draw() {
         { systems: state.systems, wormholes: state.wormholes, intelMarkers: state.intelMarkers }, 
         state, 
         settings,
-        dpr // <--- Pass DPR here
+        dpr // Pass DPR here
     );
 }
 
 function resizeCanvas() {
     const parent = UI.elements.canvas.parentElement;
-    if (parent.clientWidth > 0) {
-        // 1. Get the display size (CSS pixels)
+    if (parent && parent.clientWidth > 0) {
+        // 1. Get display size
         const displayWidth = parent.clientWidth;
         const displayHeight = parent.clientHeight;
 
-        // 2. Check for High-DPI (Retina) scaling
-        // Default to 1 if not found
+        // 2. Get Device Pixel Ratio (Retina screens)
         const dpr = window.devicePixelRatio || 1;
+        state.dpr = dpr;
 
-        // 3. Set the internal resolution (Real pixels)
+        // 3. Set internal resolution (High Res)
         UI.elements.canvas.width = Math.floor(displayWidth * dpr);
         UI.elements.canvas.height = Math.floor(displayHeight * dpr);
 
-        // 4. Set the CSS display size explicitly
+        // 4. Set display size (CSS)
         UI.elements.canvas.style.width = `${displayWidth}px`;
         UI.elements.canvas.style.height = `${displayHeight}px`;
-
-        // 5. Store the scale in the state so MapRenderer can use it
-        // We add a new property 'dpr' to our state object
-        state.dpr = dpr;
 
         draw();
     }
@@ -172,8 +114,12 @@ async function checkLogin() {
         const data = await res.json();
         if (data.logged_in) {
             UI.showMap(data);
-            await loadMapData(false); 
-            setupMapInteractions();
+            // Restore last known location if available
+            if (data.last_known_system_id) {
+                // Store it in case user clicks 'Center'
+            }
+            await loadMapData(false); // False = don't force fit view if we have saved view
+            setupComplexInteractions();
         } else {
             UI.showLogin();
         }
@@ -185,6 +131,7 @@ async function checkLogin() {
 
 async function loadMapData(shouldFit = true, oldSystemIds = null) {
     try {
+        // Parallel fetch
         const [sysRes, intelRes] = await Promise.all([
             API.getSystems(),
             API.getIntel()
@@ -202,6 +149,7 @@ async function loadMapData(shouldFit = true, oldSystemIds = null) {
 
         UI.populateSystemList(state.systems);
 
+        // Handle Sync Animation
         if (oldSystemIds) {
             state.newlySyncedIds.clear();
             Object.keys(state.systems).forEach(id => {
@@ -239,27 +187,81 @@ function fitMapToView() {
     const mapCX = minX + mapW / 2;
     const mapCY = minY + mapH / 2;
     
+    // Calculate scale to fit, with padding
     const scale = Math.min(
-        UI.elements.canvas.width / (mapW * 1.2), 
-        UI.elements.canvas.height / (mapH * 1.2)
+        UI.elements.canvas.width / (state.dpr || 1) / (mapW * 1.2), 
+        UI.elements.canvas.height / (state.dpr || 1) / (mapH * 1.2)
     ) || 1;
 
     state.viewTransform = {
         scale,
-        translateX: (UI.elements.canvas.width / 2) - (mapCX * scale),
-        translateY: (UI.elements.canvas.height / 2) - (mapCY * scale)
+        translateX: (UI.elements.canvas.width / (state.dpr || 1) / 2) - (mapCX * scale),
+        translateY: (UI.elements.canvas.height / (state.dpr || 1) / 2) - (mapCY * scale)
     };
     localStorage.setItem('mapViewTransform', JSON.stringify(state.viewTransform));
     draw();
 }
 
-// --- Interaction Setup ---
+// --- Listener Setup ---
 
-function setupMapInteractions() {
-    // Only set up map controls once logged in
+function setupGlobalListeners() {
+    // Simple UI Toggles
+    UI.setupSimpleUIListeners({
+        onInputFocus: (input) => { state.activeRouteInput = input; },
+        onClearRoute: () => {
+            state.pathNodes = [];
+            state.pathLegs = [];
+            UI.clearRouteDisplay();
+            draw();
+        }
+    });
+
+    // Login Form
+    UI.elements.loginForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const user = UI.elements.loginForm.username.value;
+        const pass = UI.elements.loginForm.password.value;
+        try {
+            const res = await API.login(user, pass);
+            const data = await res.json();
+            if (res.ok) {
+                UI.showMap(data);
+                await loadMapData(false);
+                setupComplexInteractions();
+            } else {
+                UI.elements.loginError.textContent = data.message;
+            }
+        } catch (err) { UI.elements.loginError.textContent = "Connection failed."; }
+    });
+
+    // Register Form
+    UI.elements.registerForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const payload = {
+            username: UI.elements.registerForm.username.value,
+            password: UI.elements.registerForm.password.value,
+            api_key: UI.elements.registerForm.api_key.value
+        };
+        try {
+            const res = await API.register(payload);
+            const data = await res.json();
+            if (res.ok) {
+                UI.showMap(data);
+                draw(); 
+                setupComplexInteractions();
+            } else {
+                UI.elements.registerError.textContent = data.message;
+            }
+        } catch (err) { UI.elements.registerError.textContent = "Connection failed."; }
+    });
+}
+
+function setupComplexInteractions() {
+    // Map Controls (Mouse/Touch)
     MapControls.setupMapInteractions(UI.elements.canvas, { systems: state.systems, intelMarkers: state.intelMarkers }, state, settings, {
         draw: draw,
         onSystemSelect: (system) => {
+            // Populate Route Input if active
             if (state.activeRouteInput) {
                 const sysPosStr = state.systems[system.id]?.position;
                 if (system.name.startsWith("System ") && sysPosStr) {
@@ -271,7 +273,7 @@ function setupMapInteractions() {
                 if (state.activeRouteInput === UI.elements.startSystemInput) UI.elements.endSystemInput.focus();
                 else UI.elements.routeForm.querySelector('button[type="submit"]').focus();
                 
-                state.activeRouteInput = null; 
+                state.activeRouteInput = null; // Deactivate
             }
         },
         onContextMenu: (screenX, screenY, worldX, worldY, existingMarker) => {
@@ -290,6 +292,45 @@ function setupMapInteractions() {
             UI.openIntelMenu(screenX, screenY, { x: worldX, y: worldY }, existingMarker);
         },
         closeContextMenu: () => UI.closeIntelMenu()
+    });
+
+    // Logout Button
+    UI.elements.logoutButton.addEventListener('click', async () => {
+        try {
+            await API.logout();
+            localStorage.removeItem('mapViewTransform');
+            window.location.reload();
+        } catch (e) { console.error(e); alert("Logout failed"); }
+    });
+
+    // Profile Button (to verify API Key)
+    UI.elements.profileButton.addEventListener('click', async () => {
+        try {
+            const res = await API.getProfile();
+            const data = await res.json();
+            // Determine if we show the bulk sync button
+            const statusRes = await API.checkStatus();
+            const statusData = await statusRes.json();
+            UI.openProfile(data.api_key_set, statusData.show_bulk_sync);
+        } catch (e) { console.error(e); }
+    });
+    
+    // Profile Form Save
+    UI.elements.profileForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        UI.elements.profileStatus.textContent = 'Saving...';
+        const p = {}; 
+        if (UI.elements.apiKeyInput.value && UI.elements.apiKeyInput.value !== '(Key is set and encrypted)') 
+            p.api_key = UI.elements.apiKeyInput.value;
+        if (UI.elements.newPasswordInput.value) 
+            p.password = UI.elements.newPasswordInput.value;
+            
+        try {
+            const res = await API.updateProfile(p);
+            const data = await res.json();
+            UI.elements.profileStatus.textContent = data.message;
+            setTimeout(UI.closeProfile, 2000);
+        } catch(err) { UI.elements.profileStatus.textContent = "Error saving."; }
     });
 
     // Sync Button
@@ -311,6 +352,27 @@ function setupMapInteractions() {
         } finally {
             UI.elements.syncButton.disabled = false;
             setTimeout(() => UI.elements.syncStatus.textContent = '', 5000);
+        }
+    });
+    
+    // Bulk Sync Button
+    UI.elements.bulkSyncButton.addEventListener('click', async (e) => {
+        e.preventDefault();
+        UI.elements.profileStatus.textContent = 'Importing...';
+        UI.elements.bulkSyncButton.disabled = true;
+        try {
+            const res = await API.bulkSyncFaction();
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed');
+            
+            UI.elements.profileStatus.textContent = data.message;
+            UI.elements.bulkSyncButton.classList.add('hidden');
+            UI.elements.bulkSyncText.classList.add('hidden');
+            await loadMapData(false);
+            setTimeout(UI.closeProfile, 2000);
+        } catch(e) {
+             UI.elements.profileStatus.textContent = `Error: ${e.message}`;
+             UI.elements.bulkSyncButton.disabled = false;
         }
     });
 
@@ -335,9 +397,10 @@ function setupMapInteractions() {
     UI.elements.filterAvoidSlow.addEventListener('change', updateFilters);
     UI.elements.filterAvoidHostile.addEventListener('change', updateFilters);
 
-    // Intel Actions
+    // Intel Save
     UI.elements.saveIntelBtn.addEventListener('click', async () => {
         if (!state.pendingIntelCoords) return; 
+
         const type = UI.elements.intelTypeInput.value;
         const note = UI.elements.intelNoteInput.value;
 
@@ -358,6 +421,7 @@ function setupMapInteractions() {
         } catch (e) { console.error(e); }
     });
 
+    // Intel Delete
     UI.elements.deleteIntelBtn.addEventListener('click', async () => {
         if (!state.pendingIntelCoords || !state.pendingIntelCoords.id) return;
         if (!confirm("Delete marker?")) return;
@@ -398,7 +462,8 @@ function setupMapInteractions() {
     });
 }
 
-// --- Pathfinding ---
+// --- Complex Pathfinding Logic ---
+
 async function handlePathfinding() {
     const startVal = UI.elements.startSystemInput.value.trim();
     const endVal = UI.elements.endSystemInput.value.trim();
@@ -433,6 +498,7 @@ async function handlePathfinding() {
             const sId = parseInput(stops[i]);
             const eId = parseInput(stops[i+1]);
             if (!sId || !eId) throw new Error("Invalid system.");
+            
             requests.push(API.calculatePath(sId, eId, settings.avoidSlow, settings.avoidHostile));
         }
 

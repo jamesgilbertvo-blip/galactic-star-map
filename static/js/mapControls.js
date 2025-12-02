@@ -1,315 +1,321 @@
 /**
  * Map Controls Module
- * Handles user input (Mouse, Touch, Keyboard) and modifies view state.
+ * Handles all mouse and touch interactions (pan, zoom, hover, click).
  */
 
-let isMouseDown = false;
-let isDragging = false;
-let dragStartPos = { x: 0, y: 0 };
-let lastDragPosition = { x: 0, y: 0 };
-let longPressTimer = null;
-let initialTouchDistance = null;
-let pingAnimationFrameId = null;
+let canvas;
+let data; // systems, intelMarkers
+let state; // viewTransform, pathNodes, hoveredSystem, highlightedId, toggledIds
+let settings;
+let callbacks;
 
-// Helper: Get coordinates relative to canvas
+let isPanning = false;
+let lastPoint = { x: 0, y: 0 };
+let pinchDistance = null;
+let touchPoints = [];
+
+// Utility to get coordinates, scaled by DPR to match the internal canvas resolution
 const getEventCoordinates = (canvas, e) => {
     const rect = canvas.getBoundingClientRect();
+    // Retrieve DPR here to scale CSS pixel coordinates to match internal canvas coordinates
+    const dpr = window.devicePixelRatio || 1; 
+    
+    let x, y;
     if (e.touches && e.touches.length > 0) {
-        return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+        x = e.touches[0].clientX - rect.left;
+        y = e.touches[0].clientY - rect.top;
+    } else {
+        x = e.clientX - rect.left;
+        y = e.clientY - rect.top;
     }
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    
+    // Scale the CSS pixel coordinates to match the internal canvas pixel coordinates
+    return { x: x * dpr, y: y * dpr }; 
 };
 
-/**
- * Initialize all map interaction listeners
- * @param {HTMLCanvasElement} canvas 
- * @param {Object} data - Reference to main data object { systems, ... }
- * @param {Object} state - Reference to mutable state { viewTransform, hoveredSystem, etc. }
- * @param {Object} settings - Reference to settings
- * @param {Object} callbacks - { draw(), onSystemSelect(), onContextMenu() }
- */
-export const setupMapInteractions = (canvas, data, state, settings, callbacks) => {
+// Utility to convert canvas pixel coordinates to map world coordinates
+const toWorldCoords = (screenX, screenY) => {
+    return {
+        x: (screenX / state.viewTransform.scale) - (state.viewTransform.translateX / state.viewTransform.scale),
+        y: (screenY / state.viewTransform.scale) - (state.viewTransform.translateY / state.viewTransform.scale)
+    };
+};
 
-    const handleZoom = (e) => {
-        e.preventDefault();
-        const scaleAmount = 1.1;
-        const rect = canvas.getBoundingClientRect();
-        const mX = e.clientX - rect.left;
-        const mY = e.clientY - rect.top;
-        
-        // Calculate mouse position in world space before zoom
-        const wX = (mX - state.viewTransform.translateX) / state.viewTransform.scale;
-        const wY = (mY - state.viewTransform.translateY) / state.viewTransform.scale;
+const findSystemUnderCursor = (worldX, worldY, systems) => {
+    let nearest = null;
+    let minDistanceSq = Infinity;
+    const clickToleranceSq = (10 / state.viewTransform.scale) ** 2; // Tolerance increases when zoomed out
 
-        if (e.deltaY < 0) {
-            state.viewTransform.scale *= scaleAmount; // Zoom In
-        } else {
-            state.viewTransform.scale /= scaleAmount; // Zoom Out
+    Object.values(systems).forEach(sys => {
+        if (typeof sys.x === 'number' && typeof sys.y === 'number') {
+            const dx = worldX - sys.x;
+            const dy = worldY - sys.y;
+            const distanceSq = dx * dx + dy * dy;
+
+            if (distanceSq < clickToleranceSq && distanceSq < minDistanceSq) {
+                minDistanceSq = distanceSq;
+                nearest = sys;
+            }
         }
+    });
+    return nearest;
+};
 
-        // Clamp scale
-        state.viewTransform.scale = Math.max(0.05, Math.min(state.viewTransform.scale, 10));
+// --- Event Handlers ---
 
-        // Adjust translate so the world point under mouse remains under mouse
-        state.viewTransform.translateX = mX - wX * state.viewTransform.scale;
-        state.viewTransform.translateY = mY - wY * state.viewTransform.scale;
+const handleMouseDown = (e) => {
+    e.preventDefault();
+    if (e.button === 0) { // Left click
+        isPanning = true;
+        canvas.style.cursor = 'grabbing';
+        lastPoint = getEventCoordinates(canvas, e);
+    }
+    if (e.button === 2) { // Right click (to show context menu)
+        handleContextMenu(e);
+    }
+};
 
-        // Save and Draw
-        localStorage.setItem('mapViewTransform', JSON.stringify(state.viewTransform));
+const handleMouseMove = (e) => {
+    e.preventDefault();
+    const currentPoint = getEventCoordinates(canvas, e);
+    const worldCoords = toWorldCoords(currentPoint.x, currentPoint.y);
+    
+    // 1. Handle Panning
+    if (isPanning) {
+        state.viewTransform.translateX += (currentPoint.x - lastPoint.x);
+        state.viewTransform.translateY += (currentPoint.y - lastPoint.y);
+        lastPoint = currentPoint;
         callbacks.draw();
-    };
+    } 
+    
+    // 2. Handle Hover/Tooltip (even when panning, for fluidity)
+    const hovered = findSystemUnderCursor(worldCoords.x, worldCoords.y, data.systems);
+    
+    if (hovered && state.hoveredSystem !== hovered) {
+        state.hoveredSystem = hovered;
+        callbacks.draw();
+        canvas.style.cursor = 'pointer';
+    } else if (!hovered && state.hoveredSystem !== null) {
+        state.hoveredSystem = null;
+        callbacks.draw();
+        if (!isPanning) canvas.style.cursor = 'grab';
+    }
 
-    const handleStart = (e) => {
-        // Close context menu if clicking elsewhere
-        if (callbacks.closeContextMenu) callbacks.closeContextMenu(e);
-
-        isMouseDown = true;
-        isDragging = false;
-        const coords = getEventCoordinates(canvas, e);
-        dragStartPos = { x: coords.x, y: coords.y };
-        lastDragPosition = { x: coords.x, y: coords.y };
-
-        clearTimeout(longPressTimer);
-        longPressTimer = setTimeout(() => {
-            if (!isDragging) {
-                if (state.hoveredSystem && state.hoveredSystem.catapult_radius > 0) {
-                    // Toggle catapult range
-                    const sysId = String(state.hoveredSystem.id);
-                    if (state.toggledIds.has(sysId)) state.toggledIds.delete(sysId);
-                    else state.toggledIds.add(sysId);
-                    callbacks.draw();
-                } else {
-                    // Trigger Context Menu (Long Press)
-                    const worldX = (coords.x - state.viewTransform.translateX) / state.viewTransform.scale;
-                    const worldY = (coords.y - state.viewTransform.translateY) / state.viewTransform.scale;
-                    
-                    // Check for hit on existing marker
-                    let clickedMarker = null;
-                    if (data.intelMarkers) {
-                        for (const marker of data.intelMarkers) {
-                            const dx = worldX - marker.x;
-                            const dy = worldY - marker.y;
-                            if (Math.sqrt(dx*dx + dy*dy) < (15 / state.viewTransform.scale)) {
-                                clickedMarker = marker;
-                                break;
-                            }
-                        }
-                    }
-                    callbacks.onContextMenu(coords.x, coords.y, worldX, worldY, clickedMarker);
-                }
-            }
-        }, 500);
-    };
-
-    const handleMove = (e) => {
-        if (isDragging || (e.touches && e.touches.length > 1)) {
-            e.preventDefault();
-        }
-
-        const coords = getEventCoordinates(canvas, e);
-        const worldX = (coords.x - state.viewTransform.translateX) / state.viewTransform.scale;
-        const worldY = (coords.y - state.viewTransform.translateY) / state.viewTransform.scale;
-
-        // 1. Handle Hover Logic
-        let currentlyHovering = null;
-        // Dynamic hover radius based on zoom
-        let minDistSq = Math.pow(10 / state.viewTransform.scale, 2);
-        
-        // Optimization: Only loop if we have data
-        if (data.systems) {
-            for (const sys of Object.values(data.systems)) {
-                if (typeof sys.x !== 'number') continue;
-                const dx = worldX - sys.x;
-                const dy = worldY - sys.y;
-                const distSq = dx * dx + dy * dy;
-                if (distSq < minDistSq) {
-                    minDistSq = distSq;
-                    currentlyHovering = sys;
-                }
-            }
-        }
-
-        if (state.hoveredSystem !== currentlyHovering) {
-            state.hoveredSystem = currentlyHovering;
-            callbacks.draw();
-        }
-        
-        // Update cursor
-        canvas.style.cursor = state.hoveredSystem ? 'pointer' : (isDragging ? 'grabbing' : 'grab');
-
-        // 2. Handle Pinch Zoom (Touch)
-        if (e.touches && e.touches.length === 2) {
-            isDragging = false;
-            clearTimeout(longPressTimer);
-            const t1 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-            const t2 = { x: e.touches[1].clientX, y: e.touches[1].clientY };
-            const dist = Math.hypot(t1.x - t2.x, t1.y - t2.y);
-            
-            if (initialTouchDistance) {
-                const scaleFactor = dist / initialTouchDistance;
-                const rect = canvas.getBoundingClientRect();
-                const midX = (t1.x + t2.x) / 2 - rect.left;
-                const midY = (t1.y + t2.y) / 2 - rect.top;
-                
-                const worldMidX = (midX - state.viewTransform.translateX) / state.viewTransform.scale;
-                const worldMidY = (midY - state.viewTransform.translateY) / state.viewTransform.scale;
-
-                state.viewTransform.scale *= scaleFactor;
-                state.viewTransform.scale = Math.max(0.05, Math.min(state.viewTransform.scale, 10));
-
-                state.viewTransform.translateX = midX - worldMidX * state.viewTransform.scale;
-                state.viewTransform.translateY = midY - worldMidY * state.viewTransform.scale;
-                
-                callbacks.draw();
-            }
-            initialTouchDistance = dist;
-            return;
-        } else {
-            initialTouchDistance = null;
-        }
-
-        // 3. Handle Panning (Mouse/Single Touch)
-        if (isMouseDown && (!e.touches || e.touches.length === 1)) {
-            // Check drag threshold
-            if (!isDragging && Math.hypot(coords.x - dragStartPos.x, coords.y - dragStartPos.y) > 5) {
-                isDragging = true;
-                clearTimeout(longPressTimer);
-            }
-            if (isDragging) {
-                const dx = coords.x - lastDragPosition.x;
-                const dy = coords.y - lastDragPosition.y;
-                state.viewTransform.translateX += dx;
-                state.viewTransform.translateY += dy;
-                lastDragPosition = { x: coords.x, y: coords.y };
-                callbacks.draw();
-            }
-        }
-    };
-
-    const handleEnd = (e) => {
-        clearTimeout(longPressTimer);
-        
-        if (!isDragging) {
-            if (state.hoveredSystem) {
-                if (e.shiftKey) {
-                    // Shift+Click: Toggle Range
-                    if (state.hoveredSystem.catapult_radius > 0) {
-                        const sysId = String(state.hoveredSystem.id);
-                        if (state.toggledIds.has(sysId)) state.toggledIds.delete(sysId);
-                        else state.toggledIds.add(sysId);
-                    }
-                } else {
-                    // Normal Click: Select System (for route) or Highlight
-                    if (callbacks.onSystemSelect) {
-                        callbacks.onSystemSelect(state.hoveredSystem);
-                    }
-                    // Highlight on map
-                    state.highlightedId = state.hoveredSystem.id;
-                }
-            } else {
-                // Clicked empty space -> Clear highlight
-                state.highlightedId = null;
-            }
-            callbacks.draw();
-        }
-
-        isMouseDown = false;
-        isDragging = false;
-        initialTouchDistance = null;
-        canvas.style.cursor = state.hoveredSystem ? 'pointer' : 'grab';
-        localStorage.setItem('mapViewTransform', JSON.stringify(state.viewTransform));
-    };
-
-    const handleContextMenu = (e) => {
-        e.preventDefault();
-        const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        const worldX = (x - state.viewTransform.translateX) / state.viewTransform.scale;
-        const worldY = (y - state.viewTransform.translateY) / state.viewTransform.scale;
-
-        // Check hit on existing marker
-        let clickedMarker = null;
-        if (data.intelMarkers) {
-            for (const marker of data.intelMarkers) {
-                const dx = worldX - marker.x;
-                const dy = worldY - marker.y;
-                if (Math.sqrt(dx*dx + dy*dy) < (15 / state.viewTransform.scale)) {
-                    clickedMarker = marker;
-                    break;
-                }
-            }
-        }
-        
-        callbacks.onContextMenu(e.clientX, e.clientY, worldX, worldY, clickedMarker);
-    };
-
-    // Attach Listeners
-    canvas.addEventListener('wheel', handleZoom, { passive: false });
-    canvas.addEventListener('mousedown', handleStart);
-    canvas.addEventListener('mousemove', handleMove);
-    canvas.addEventListener('mouseup', handleEnd);
-    canvas.addEventListener('mouseleave', handleEnd);
-    canvas.addEventListener('touchstart', handleStart, { passive: false });
-    canvas.addEventListener('touchmove', handleMove, { passive: false });
-    canvas.addEventListener('touchend', handleEnd);
-    canvas.addEventListener('touchcancel', handleEnd);
-    canvas.addEventListener('contextmenu', handleContextMenu);
+    // Close context menu if moving away
+    if (state.pendingIntelCoords) {
+        callbacks.closeContextMenu();
+        state.pendingIntelCoords = null;
+    }
 };
 
-// --- View Actions ---
+const handleMouseUp = (e) => {
+    e.preventDefault();
+    if (e.button === 0) { // Left click release
+        isPanning = false;
+        canvas.style.cursor = state.hoveredSystem ? 'pointer' : 'grab';
+    }
+};
 
-export const centerOnSystem = (canvas, state, system, callbacks) => {
-    if (!system || typeof system.x !== 'number') return;
-    
-    state.viewTransform.scale = 1.5;
-    state.viewTransform.translateX = (canvas.width / 2) - (system.x * state.viewTransform.scale);
-    state.viewTransform.translateY = (canvas.height / 2) - (system.y * state.viewTransform.scale);
-    
-    state.highlightedId = system.id;
+const handleMouseClick = (e) => {
+    if (e.button !== 0 || isPanning) return; // Only process non-panning left clicks
+
+    const point = getEventCoordinates(canvas, e);
+    const worldCoords = toWorldCoords(point.x, point.y);
+    const selected = findSystemUnderCursor(worldCoords.x, worldCoords.y, data.systems);
+
+    if (selected) {
+        // Shift+Click for range rings
+        if (e.shiftKey) {
+            const systemId = String(selected.id);
+            if (state.toggledIds.has(systemId)) {
+                state.toggledIds.delete(systemId);
+            } else {
+                state.toggledIds.add(systemId);
+            }
+        } else {
+            // Regular click: Set system as highlighted and notify UI for route input
+            state.highlightedId = selected.id;
+            callbacks.onSystemSelect(selected);
+        }
+        state.hoveredSystem = null; // Clear hover state
+        callbacks.draw();
+    }
+};
+
+const handleWheel = (e) => {
+    e.preventDefault();
+    const delta = e.deltaY * -0.001; // Scale factor for zoom
+    const zoomFactor = 1 + delta;
+
+    const point = getEventCoordinates(canvas, e);
+    const worldCoordsBefore = toWorldCoords(point.x, point.y);
+
+    // Apply zoom
+    state.viewTransform.scale *= zoomFactor;
+    state.viewTransform.scale = Math.min(Math.max(state.viewTransform.scale, 0.05), 10); // Clamp zoom
+
+    // Reposition to zoom around the cursor
+    state.viewTransform.translateX = point.x - (worldCoordsBefore.x * state.viewTransform.scale);
+    state.viewTransform.translateY = point.y - (worldCoordsBefore.y * state.viewTransform.scale);
+
     localStorage.setItem('mapViewTransform', JSON.stringify(state.viewTransform));
     callbacks.draw();
-
-    // Auto-clear highlight after 2s
-    setTimeout(() => {
-        if (state.highlightedId === system.id) {
-            state.highlightedId = null;
-            callbacks.draw();
-        }
-    }, 2000);
 };
 
-export const centerOnLocationWithPing = (canvas, state, system, callbacks) => {
-    if (!system) return;
-
-    // 1. Center View
-    state.viewTransform.scale = 1.0;
-    state.viewTransform.translateX = (canvas.width / 2) - (system.x * state.viewTransform.scale);
-    state.viewTransform.translateY = (canvas.height / 2) - (system.y * state.viewTransform.scale);
+const handleContextMenu = (e) => {
+    e.preventDefault();
+    const point = getEventCoordinates(canvas, e);
+    const worldCoords = toWorldCoords(point.x, point.y);
     
-    state.highlightedId = null; // Clear any static highlight
-    localStorage.setItem('mapViewTransform', JSON.stringify(state.viewTransform));
+    // Check if the click landed on an existing Intel Marker
+    const existingIntel = findIntelMarkerUnderCursor(worldCoords.x, worldCoords.y, data.intelMarkers);
 
-    // 2. Setup Ping Animation
-    if (pingAnimationFrameId) cancelAnimationFrame(pingAnimationFrameId);
+    callbacks.onContextMenu(e.clientX, e.clientY, worldCoords.x, worldCoords.y, existingIntel);
+};
+
+const findIntelMarkerUnderCursor = (worldX, worldY, markers) => {
+    let nearest = null;
+    let minDistanceSq = Infinity;
+    // Intel marker size is slightly larger than systems
+    const clickToleranceSq = (15 / state.viewTransform.scale) ** 2;
+
+    markers.forEach(marker => {
+        if (typeof marker.x === 'number' && typeof marker.y === 'number') {
+            const dx = worldX - marker.x;
+            const dy = worldY - marker.y;
+            const distanceSq = dx * dx + dy * dy;
+
+            if (distanceSq < clickToleranceSq && distanceSq < minDistanceSq) {
+                minDistanceSq = distanceSq;
+                nearest = marker;
+            }
+        }
+    });
+    return nearest;
+};
+
+// --- Public Setup Function ---
+
+export const setupMapInteractions = (canvasEl, mapData, appState, mapSettings, eventCallbacks) => {
+    canvas = canvasEl;
+    data = mapData;
+    state = appState;
+    settings = mapSettings;
+    callbacks = eventCallbacks;
+
+    canvas.addEventListener('mousedown', handleMouseDown);
+    canvas.addEventListener('mousemove', handleMouseMove);
+    canvas.addEventListener('mouseup', handleMouseUp);
+    canvas.addEventListener('click', handleMouseClick);
+    canvas.addEventListener('wheel', handleWheel);
+    canvas.addEventListener('contextmenu', handleContextMenu);
     
-    state.pingAnimation = {
+    // Prevent default touch actions (scrolling, zooming page)
+    canvas.addEventListener('touchstart', (e) => { 
+        if (e.touches.length === 1) handleMouseDown(e.touches[0]); 
+        if (e.touches.length === 2) handleTouchStart(e);
+    }, { passive: false });
+    
+    canvas.addEventListener('touchmove', (e) => { 
+        if (e.touches.length === 1) handleMouseMove(e.touches[0]);
+        if (e.touches.length === 2) handleTouchMove(e);
+    }, { passive: false });
+    
+    canvas.addEventListener('touchend', (e) => {
+        if (e.touches.length === 0) handleMouseUp(e.changedTouches[0]);
+        if (e.touches.length < 2) handleTouchEnd(e);
+    });
+
+    // Handle touch events for multi-touch (pinch-zoom)
+    const handleTouchStart = (e) => {
+        e.preventDefault();
+        touchPoints = [getEventCoordinates(canvas, { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY }), getEventCoordinates(canvas, { clientX: e.touches[1].clientX, clientY: e.touches[1].clientY })];
+        pinchDistance = Math.hypot(touchPoints[0].x - touchPoints[1].x, touchPoints[0].y - touchPoints[1].y);
+    };
+
+    const handleTouchMove = (e) => {
+        e.preventDefault();
+        const currentTouchPoints = [getEventCoordinates(canvas, { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY }), getEventCoordinates(canvas, { clientX: e.touches[1].clientX, clientY: e.touches[1].clientY })];
+        const currentPinchDistance = Math.hypot(currentTouchPoints[0].x - currentTouchPoints[1].x, currentTouchPoints[0].y - currentTouchPoints[1].y);
+        
+        // Pinch Zoom
+        if (pinchDistance) {
+            const zoomFactor = currentPinchDistance / pinchDistance;
+            
+            const centerPointX = (touchPoints[0].x + touchPoints[1].x) / 2;
+            const centerPointY = (touchPoints[0].y + touchPoints[1].y) / 2;
+
+            const worldCoordsBefore = toWorldCoords(centerPointX, centerPointY);
+
+            state.viewTransform.scale *= zoomFactor;
+            state.viewTransform.scale = Math.min(Math.max(state.viewTransform.scale, 0.05), 10);
+            
+            state.viewTransform.translateX = centerPointX - (worldCoordsBefore.x * state.viewTransform.scale);
+            state.viewTransform.translateY = centerPointY - (worldCoordsBefore.y * state.viewTransform.scale);
+
+            pinchDistance = currentPinchDistance;
+            touchPoints = currentTouchPoints;
+        }
+
+        callbacks.draw();
+        localStorage.setItem('mapViewTransform', JSON.stringify(state.viewTransform));
+    };
+
+    const handleTouchEnd = () => {
+        pinchDistance = null;
+        touchPoints = [];
+    };
+    
+    // Initialize view based on state (must run draw on successful load)
+    if (state.viewTransform.scale === 1 && state.viewTransform.translateX === 0) {
+        // If the view hasn't been set yet, fit map to view
+        // Note: This needs to be handled by index.js after data load, not here.
+    }
+};
+
+// Center on a location with a ping animation
+export const centerOnLocationWithPing = (canvasEl, appState, system, eventCallbacks) => {
+    const dpr = window.devicePixelRatio || 1; 
+    const targetX = system.x;
+    const targetY = system.y;
+
+    const canvasCX = (canvasEl.width / 2) / dpr;
+    const canvasCY = (canvasEl.height / 2) / dpr;
+    
+    appState.viewTransform.translateX = canvasCX - (targetX * appState.viewTransform.scale);
+    appState.viewTransform.translateY = canvasCY - (targetY * appState.viewTransform.scale);
+
+    appState.pingAnimation = {
         systemId: system.id,
         startTime: Date.now(),
-        duration: 1200
+        duration: 2000 
     };
 
-    const animate = () => {
-        if (!state.pingAnimation) return;
-        const elapsed = Date.now() - state.pingAnimation.startTime;
-        if (elapsed > state.pingAnimation.duration) {
-            state.pingAnimation = null;
-            callbacks.draw();
-            return;
+    const interval = setInterval(() => {
+        if (Date.now() - appState.pingAnimation.startTime > appState.pingAnimation.duration) {
+            clearInterval(interval);
+            appState.pingAnimation = null;
         }
-        callbacks.draw();
-        pingAnimationFrameId = requestAnimationFrame(animate);
-    };
+        eventCallbacks.draw();
+    }, 1000 / 60); // 60 FPS
+    
+    eventCallbacks.draw();
+    localStorage.setItem('mapViewTransform', JSON.stringify(appState.viewTransform));
+};
 
-    animate();
+// Center on a system without ping
+export const centerOnSystem = (canvasEl, appState, system, eventCallbacks) => {
+    const dpr = window.devicePixelRatio || 1; 
+    const targetX = system.x;
+    const targetY = system.y;
+
+    const canvasCX = (canvasEl.width / 2) / dpr;
+    const canvasCY = (canvasEl.height / 2) / dpr;
+    
+    appState.viewTransform.translateX = canvasCX - (targetX * appState.viewTransform.scale);
+    appState.viewTransform.translateY = canvasCY - (targetY * appState.viewTransform.scale);
+    appState.highlightedId = system.id;
+    
+    eventCallbacks.draw();
+    localStorage.setItem('mapViewTransform', JSON.stringify(appState.viewTransform));
 };
