@@ -24,7 +24,7 @@ const state = {
     // Interaction State
     hoveredSystem: null,
     highlightedId: null,
-    toggledIds: new Set(), // For showing range rings
+    toggledIds: new Set(),
     newlySyncedIds: new Set(),
     
     // Animation State
@@ -34,7 +34,7 @@ const state = {
     activeRouteInput: null,
 
     // Intel Context State
-    pendingIntelCoords: null // {x, y, system_id?, id?}
+    pendingIntelCoords: null
 };
 
 // --- Settings ---
@@ -55,7 +55,21 @@ document.addEventListener('DOMContentLoaded', () => {
         if (saved) state.viewTransform = JSON.parse(saved);
     } catch (e) { console.error("Error loading view state", e); }
 
-    // 2. Setup Simple UI Listeners (Toggles, View Switches)
+    // 2. Setup UI Listeners
+    setupGlobalListeners();
+
+    // 3. Setup Map Canvas
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // 4. Check Login & Start
+    checkLogin();
+});
+
+// --- Listener Setup ---
+
+function setupGlobalListeners() {
+    // Simple UI Toggles
     UI.setupSimpleUIListeners({
         onInputFocus: (input) => { state.activeRouteInput = input; },
         onClearRoute: () => {
@@ -65,14 +79,47 @@ document.addEventListener('DOMContentLoaded', () => {
             draw();
         }
     });
-    
-    // 3. Setup Map Canvas
-    window.addEventListener('resize', resizeCanvas);
-    resizeCanvas();
 
-    // 4. Check Login & Start
-    checkLogin();
-});
+    // --- LOGIN FORM (Moved here so it works when logged out) ---
+    UI.elements.loginForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const user = UI.elements.loginForm.username.value;
+        const pass = UI.elements.loginForm.password.value;
+        try {
+            const res = await API.login(user, pass);
+            const data = await res.json();
+            if (res.ok) {
+                UI.showMap(data);
+                await loadMapData(false);
+                setupMapInteractions(); // Initialize map controls
+            } else {
+                UI.elements.loginError.textContent = data.message;
+            }
+        } catch (err) { UI.elements.loginError.textContent = "Connection failed."; }
+    });
+
+    // --- REGISTER FORM (Added back) ---
+    UI.elements.registerForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const payload = {
+            username: UI.elements.registerForm.username.value,
+            password: UI.elements.registerForm.password.value,
+            api_key: UI.elements.registerForm.api_key.value
+        };
+        try {
+            const res = await API.register(payload);
+            const data = await res.json();
+            if (res.ok) {
+                UI.showMap(data);
+                // New user needs a fresh sync or initial data
+                draw(); 
+                setupMapInteractions();
+            } else {
+                UI.elements.registerError.textContent = data.message;
+            }
+        } catch (err) { UI.elements.registerError.textContent = "Connection failed."; }
+    });
+}
 
 // --- Core Functions ---
 
@@ -102,12 +149,8 @@ async function checkLogin() {
         const data = await res.json();
         if (data.logged_in) {
             UI.showMap(data);
-            // Restore last known location if available
-            if (data.last_known_system_id) {
-                // Only used if we want to center, currently handled by button click
-            }
-            await loadMapData(false); // False = don't force fit view if we have saved view
-            setupComplexInteractions();
+            await loadMapData(false); 
+            setupMapInteractions();
         } else {
             UI.showLogin();
         }
@@ -119,7 +162,6 @@ async function checkLogin() {
 
 async function loadMapData(shouldFit = true, oldSystemIds = null) {
     try {
-        // Parallel fetch
         const [sysRes, intelRes] = await Promise.all([
             API.getSystems(),
             API.getIntel()
@@ -137,7 +179,6 @@ async function loadMapData(shouldFit = true, oldSystemIds = null) {
 
         UI.populateSystemList(state.systems);
 
-        // Handle Sync Animation
         if (oldSystemIds) {
             state.newlySyncedIds.clear();
             Object.keys(state.systems).forEach(id => {
@@ -175,7 +216,6 @@ function fitMapToView() {
     const mapCX = minX + mapW / 2;
     const mapCY = minY + mapH / 2;
     
-    // Calculate scale to fit, with padding
     const scale = Math.min(
         UI.elements.canvas.width / (mapW * 1.2), 
         UI.elements.canvas.height / (mapH * 1.2)
@@ -192,12 +232,11 @@ function fitMapToView() {
 
 // --- Interaction Setup ---
 
-function setupComplexInteractions() {
-    // Map Controls (Mouse/Touch)
+function setupMapInteractions() {
+    // Only set up map controls once logged in
     MapControls.setupMapInteractions(UI.elements.canvas, { systems: state.systems, intelMarkers: state.intelMarkers }, state, settings, {
         draw: draw,
         onSystemSelect: (system) => {
-            // Populate Route Input if active
             if (state.activeRouteInput) {
                 const sysPosStr = state.systems[system.id]?.position;
                 if (system.name.startsWith("System ") && sysPosStr) {
@@ -209,14 +248,12 @@ function setupComplexInteractions() {
                 if (state.activeRouteInput === UI.elements.startSystemInput) UI.elements.endSystemInput.focus();
                 else UI.elements.routeForm.querySelector('button[type="submit"]').focus();
                 
-                state.activeRouteInput = null; // Deactivate
+                state.activeRouteInput = null; 
             }
         },
         onContextMenu: (screenX, screenY, worldX, worldY, existingMarker) => {
-            // Store coords for the Save/Delete buttons to use
             state.pendingIntelCoords = existingMarker ? existingMarker : { x: worldX, y: worldY };
             
-            // If adding new, try to link to nearest system
             if (!existingMarker) {
                 let nearest = null, minDist = Infinity;
                 Object.values(state.systems).forEach(s => {
@@ -227,28 +264,9 @@ function setupComplexInteractions() {
                     state.pendingIntelCoords.system_id = nearest.id;
                 }
             }
-
             UI.openIntelMenu(screenX, screenY, { x: worldX, y: worldY }, existingMarker);
         },
         closeContextMenu: () => UI.closeIntelMenu()
-    });
-
-    // Login Form
-    UI.elements.loginForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const user = UI.elements.loginForm.username.value;
-        const pass = UI.elements.loginForm.password.value;
-        try {
-            const res = await API.login(user, pass);
-            const data = await res.json();
-            if (res.ok) {
-                UI.showMap(data);
-                await loadMapData(false);
-                setupComplexInteractions();
-            } else {
-                UI.elements.loginError.textContent = data.message;
-            }
-        } catch (err) { UI.elements.loginError.textContent = "Connection failed."; }
     });
 
     // Sync Button
@@ -261,10 +279,8 @@ function setupComplexInteractions() {
             const data = await res.json();
             UI.elements.syncStatus.textContent = data.message || data.error;
             if (res.ok) {
-                // Refresh Last Known Location
                 const statusRes = await API.checkStatus();
                 const statusData = await statusRes.json();
-                // Refresh Map
                 await loadMapData(false, oldIds);
             }
         } catch (e) {
@@ -275,7 +291,7 @@ function setupComplexInteractions() {
         }
     });
 
-    // Route Calculation (Multi-Stop)
+    // Route Calculation
     UI.elements.routeForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         await handlePathfinding();
@@ -296,10 +312,9 @@ function setupComplexInteractions() {
     UI.elements.filterAvoidSlow.addEventListener('change', updateFilters);
     UI.elements.filterAvoidHostile.addEventListener('change', updateFilters);
 
-    // Intel Save
+    // Intel Actions
     UI.elements.saveIntelBtn.addEventListener('click', async () => {
         if (!state.pendingIntelCoords) return; 
-
         const type = UI.elements.intelTypeInput.value;
         const note = UI.elements.intelNoteInput.value;
 
@@ -313,14 +328,13 @@ function setupComplexInteractions() {
             });
             if (res.ok) {
                 UI.closeIntelMenu();
-                await loadMapData(false); // Refresh to show new marker
+                await loadMapData(false); 
             } else {
                 alert("Failed to save.");
             }
         } catch (e) { console.error(e); }
     });
 
-    // Intel Delete
     UI.elements.deleteIntelBtn.addEventListener('click', async () => {
         if (!state.pendingIntelCoords || !state.pendingIntelCoords.id) return;
         if (!confirm("Delete marker?")) return;
@@ -329,7 +343,7 @@ function setupComplexInteractions() {
             const res = await API.deleteIntel(state.pendingIntelCoords.id);
             if (res.ok) {
                 UI.closeIntelMenu();
-                await loadMapData(false); // Refresh
+                await loadMapData(false); 
             }
         } catch (e) { console.error(e); }
     });
@@ -361,13 +375,10 @@ function setupComplexInteractions() {
     });
 }
 
-// --- Complex Pathfinding Logic ---
-
+// --- Pathfinding ---
 async function handlePathfinding() {
     const startVal = UI.elements.startSystemInput.value.trim();
     const endVal = UI.elements.endSystemInput.value.trim();
-    
-    // Gather waypoints
     const waypoints = [];
     UI.elements.waypointsContainer.querySelectorAll('input').forEach(inp => {
         if(inp.value.trim()) waypoints.push(inp.value.trim());
@@ -399,7 +410,6 @@ async function handlePathfinding() {
             const sId = parseInput(stops[i]);
             const eId = parseInput(stops[i+1]);
             if (!sId || !eId) throw new Error("Invalid system.");
-            
             requests.push(API.calculatePath(sId, eId, settings.avoidSlow, settings.avoidHostile));
         }
 
@@ -416,7 +426,6 @@ async function handlePathfinding() {
             combinedPathLegs = combinedPathLegs.concat(d.detailed_path);
         }
 
-        // Update State
         state.pathNodes = combinedPathNodes;
         state.pathLegs = combinedPathLegs;
 
@@ -424,10 +433,9 @@ async function handlePathfinding() {
             distance: totalDist,
             path: combinedPathNodes,
             detailed_path: combinedPathLegs
-        }, stops, state.systems); // Pass systems for name lookup
+        }, stops, state.systems); 
 
-        draw(); // Show lines
-
+        draw(); 
     } catch (e) {
         UI.elements.routeDetailsContainer.innerHTML = "Route failed: " + e.message;
     }
