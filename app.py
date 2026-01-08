@@ -1016,16 +1016,14 @@ def delete_region_effect():
          conn.close()
 # --- END MODIFIED ---
     
+# --- PHASE 1 MODIFICATION: Open the Gates (All systems visible) ---
 @app.route('/api/systems')
 def get_systems_data():
     if 'user_id' not in session: return jsonify({'error': 'Not authenticated'}), 401
-    conn, cursor = get_db_connection(); param = '%s' if bool(DATABASE_URL) else '?'
-    # Always fetch region_name now
-    if session.get('is_developer'):
-        cursor.execute('SELECT s.id, s.name, s.x, s.y, s.position, s.catapult_radius, s.owner_faction_id, s.region_name FROM systems s')
-    else:
-        faction_id = session['faction_id']
-        cursor.execute(f'SELECT s.id, s.name, s.x, s.y, s.position, s.catapult_radius, s.owner_faction_id, s.region_name FROM systems s JOIN faction_discovered_systems fds ON s.id = fds.system_id WHERE fds.faction_id = {param}', (faction_id,))
+    conn, cursor = get_db_connection()
+    
+    # UNCONDITIONALLY fetch all systems
+    cursor.execute('SELECT s.id, s.name, s.x, s.y, s.position, s.catapult_radius, s.owner_faction_id, s.region_name FROM systems s')
     
     systems_list = cursor.fetchall()
     # Convert position Decimal to string for JSON serialization
@@ -1036,9 +1034,12 @@ def get_systems_data():
              sys_data['position'] = str(sys_data['position'])
         systems_dict[sys_data['id']] = sys_data
         
-    cursor.execute('SELECT system_a_id, system_b_id FROM wormholes'); all_wormholes = cursor.fetchall()
-    system_ids = set(systems_dict.keys())
-    visible_wormholes = [(wh['system_a_id'], wh['system_b_id']) for wh in all_wormholes if wh['system_a_id'] in system_ids and wh['system_b_id'] in system_ids]
+    cursor.execute('SELECT system_a_id, system_b_id FROM wormholes')
+    all_wormholes = cursor.fetchall()
+    
+    # Since all systems are visible, all wormholes are visible
+    visible_wormholes = [(wh['system_a_id'], wh['system_b_id']) for wh in all_wormholes]
+    
     conn.close()
     return jsonify({'systems': systems_dict, 'wormholes': visible_wormholes})
 
@@ -1055,7 +1056,8 @@ def handle_intel():
     
     try:
         if request.method == 'GET':
-            cursor.execute(f"SELECT id, system_id, x, y, type, note, created_by_user_id FROM faction_intel WHERE faction_id = {param}", (faction_id,))
+            # --- PHASE 1 MODIFICATION: Show ALL intel to everyone ---
+            cursor.execute("SELECT id, system_id, x, y, type, note, created_by_user_id FROM faction_intel")
             markers = cursor.fetchall()
             return jsonify(markers)
             
@@ -1087,7 +1089,7 @@ def handle_intel():
             
             if not marker_id: return jsonify({'error': 'Marker ID required'}), 400
             
-            # Only allow deleting markers belonging to own faction
+            # Still restrict deletion to own faction to prevent trolling
             cursor.execute(f"DELETE FROM faction_intel WHERE id = {param} AND faction_id = {param}", (marker_id, faction_id))
             if cursor.rowcount == 0:
                 return jsonify({'error': 'Marker not found or permission denied'}), 404
@@ -1134,11 +1136,9 @@ def calculate_path():
         slow_region_names = {row['region_name'] for row in cursor.fetchall()}
         print(f"Avoiding slow regions: {slow_region_names}") # Debugging
 
-    # Fetch systems including region_name
-    if session.get('is_developer'):
-        cursor.execute('SELECT id, name, x, y, position, catapult_radius, owner_faction_id, region_name FROM systems')
-    else:
-        cursor.execute(f'SELECT s.id, s.name, s.x, s.y, s.position, s.catapult_radius, s.owner_faction_id, s.region_name FROM systems s JOIN faction_discovered_systems fds ON s.id = fds.system_id WHERE fds.faction_id = {param}', (user_faction_id,))
+    # --- PHASE 1 MODIFICATION: Fetch ALL systems for pathfinding ---
+    cursor.execute('SELECT id, name, x, y, position, catapult_radius, owner_faction_id, region_name FROM systems')
+    
     all_systems_raw = cursor.fetchall(); cursor.execute('SELECT system_a_id, system_b_id FROM wormholes'); all_wormholes = cursor.fetchall(); conn.close()
     
     if not all_systems_raw: return jsonify({'path': [], 'distance': None})
